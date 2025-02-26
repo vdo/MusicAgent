@@ -8,7 +8,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 from tools.web_search import DuckDuckGoSearchTool as WebSearch
 from tools.visit_webpage import VisitWebpageTool as VisitWebpage
 from tools.chords import NotesFromChordTool as NotesFromChord
-from tools.all_modes import AllModesTool as AllModes
+from tools.chords import AllModesTool as AllModes
 from tools.final_answer import FinalAnswerTool as FinalAnswer
 
 
@@ -29,15 +29,14 @@ with open(os.path.join(CURRENT_DIR, "prompts.yaml"), 'r') as stream:
 
 agent = CodeAgent(
     model=model,
-    tools=[web_search, visit_webpage, notes_from_chord, all_modes],
+    tools=[web_search, visit_webpage, notes_from_chord, all_modes, final_answer],
     managed_agents=[],
     max_steps=10,
     verbosity_level=2,
     grammar=None,
     planning_interval=None,
     name=None,
-    description=None,
-    description=None,
+    description="A music assitant agent.",
     prompt_templates=prompt_templates
 )
 if __name__ == "__main__":
