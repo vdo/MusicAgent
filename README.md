@@ -1,6 +1,6 @@
 ---
-title: AlfredAgent
-emoji: 🏢
+title: MusicAgent
+emoji: 🎹
 colorFrom: purple
 colorTo: red
 sdk: gradio
@@ -10,6 +10,8 @@ pinned: false
 tags:
 - smolagents
 - agent
+- music
+- mingus
 ---
 
 Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
