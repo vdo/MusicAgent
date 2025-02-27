@@ -215,24 +215,27 @@ Note: The notes will be distributed evenly across the specified number of bars. 
     def inputs(self):
         return {
             "notes": {
-                "type": "list",
+                "type": "array",
                 "description": "List of MIDI note numbers (0-127) or dictionaries with note, velocity, etc.",
                 "required": True
             },
             "num_bars": {
                 "type": "number",
                 "description": "Number of bars to spread the notes across",
-                "default": 1
+                "default": 1,
+                "nullable": True
             },
             "channel": {
                 "type": "number",
                 "description": "MIDI channel to use (0-15)",
-                "default": "Uses the default channel set in the UI"
+                "default": "1",
+                "nullable": True
             },
             "quantize": {
                 "type": "boolean",
                 "description": "Whether to quantize the notes to the MIDI clock",
-                "default": True
+                "default": True,
+                "nullable": True
             }
         }
     

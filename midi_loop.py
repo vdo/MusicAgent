@@ -235,7 +235,7 @@ class MidiEventLoop:
                     # Check if we've completed a bar
                     if self.tick_counter % self.ticks_per_bar == 0:
                         self.current_bar += 1
-                        print(f"Bar {self.current_bar} (internal clock)")
+                        # print(f"Bar {self.current_bar} (internal clock)")
                 
                 # Sleep a small amount to avoid busy waiting
                 time.sleep(min(tick_duration / 10, 0.001))

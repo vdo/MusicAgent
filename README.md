@@ -61,6 +61,7 @@ MusicAgent is built on a modular architecture that combines several key componen
    - Select your preferred MIDI input and output devices
    - Choose the MIDI channel you want to use
 3. **Ask Music-Related Questions**: Type your music theory questions or MIDI control requests in the chat interface
+4. **Access from Mobile**: Scan the QR code displayed in the terminal to access the interface from your mobile device
 
 ## Technical Details
 

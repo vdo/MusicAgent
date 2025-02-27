@@ -6,3 +6,4 @@ smolagents[gradio]
 mingus
 mido
 python-rtmidi
+qrcode

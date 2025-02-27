@@ -2,6 +2,10 @@ import yaml
 import os
 import mido
 import gradio as gr
+import qrcode
+from io import BytesIO
+import threading
+import time
 from smolagents import CodeAgent, HfApiModel
 
 # Get current directory path
@@ -109,8 +113,8 @@ def refresh_midi_devices():
     available_outputs_with_none = ["None"] + available_outputs
     
     return (
-        gr.Dropdown.update(choices=available_inputs_with_none),
-        gr.Dropdown.update(choices=available_outputs_with_none),
+        gr.update(choices=available_inputs_with_none),
+        gr.update(choices=available_outputs_with_none),
         f"Found {len(available_inputs)} input(s) and {len(available_outputs)} output(s)"
     )
 
@@ -203,7 +207,58 @@ with gr.Blocks(title="MusicAgent") as ui:
     msg.submit(respond, [msg, chatbot], [msg, chatbot])
 
 try:
-    ui.launch(share=True)
+    # Create a variable to store the share URL
+    server = None
+    
+    # Function to launch the UI in a separate thread
+    def launch_ui():
+        global server
+        server = ui.launch(share=True, prevent_thread_lock=True)
+ 
+    
+    # Start the UI in a separate thread
+    ui_thread = threading.Thread(target=launch_ui)
+    ui_thread.daemon = True
+    ui_thread.start()
+
+    
+    # Wait for the UI to start and get the share URL
+    print("Starting the UI and generating QR code...")
+    for _ in range(10):  # Wait up to 10 seconds
+        if server:
+            break
+        time.sleep(1)
+
+    
+    if server:
+        print(f"\nShare URL: {server[2]}")
+        
+        # Generate QR code for the share URL
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=1,
+            border=2,
+        )
+        qr.add_data(server[2])
+        qr.make(fit=True)
+        
+        # Print the QR code directly to the console
+        print("\nScan this QR code with your phone to access the app:")
+        qr.print_ascii(invert=True)
+        print(f"\nOr visit: {server[2]}")
+    else:
+        print("Could not get share URL within the timeout period.")
+        print("The app is still running, but no QR code could be generated.")
+    
+    # Keep the main thread running until the user presses Ctrl+C
+    print("\nPress Ctrl+C to stop the server")
+    while True:
+        try:
+            time.sleep(1)
+        except KeyboardInterrupt:
+            print("\nStopping server...")
+            break
 finally:
     # Make sure to stop the MIDI event loop when the app is closed
     midi_loop.stop()
