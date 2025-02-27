@@ -8,7 +8,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from midi_loop import MidiEventLoop
 
 class MidiSequenceTool(Tool):
-    """Tool for sending sequences of MIDI notes to be spread across bars."""
     
     def __init__(self, midi_loop=None):
         """
@@ -29,7 +28,7 @@ class MidiSequenceTool(Tool):
         """
         self.midi_loop = midi_loop
     
-    def __call__(self, notes, num_bars=1, channel=0):
+    def forward(self, notes, num_bars=1, channel=0):
         """
         Send a sequence of MIDI notes to be spread across the specified number of bars.
         
@@ -82,13 +81,33 @@ class MidiSequenceTool(Tool):
                             return f"Error: Velocity value {velocity} at position {i} is out of range (0-127)"
                     
                     processed_notes.append(note_data)
+                elif isinstance(note_data, list):
+                    # This is a chord
+                    chord_notes = []
+                    for j, chord_note in enumerate(note_data):
+                        if isinstance(chord_note, (int, float)):
+                            note = int(chord_note)
+                            if note < 0 or note > 127:
+                                return f"Error: Note value {note} in chord at position {i} is out of range (0-127)"
+                            chord_notes.append(note)
+                        else:
+                            return f"Error: Invalid note in chord at position {i}, note {j}: {chord_note}"
+                    processed_notes.append(note_data)
                 else:
                     return f"Error: Invalid note data at position {i}: {note_data}"
             
             # Send the sequence to the MIDI event loop
             self.midi_loop.receive_notes_sequence(processed_notes, num_bars, channel)
             
-            return f"Sent sequence of {len(processed_notes)} MIDI notes spread across {num_bars} bars on channel {channel}"
+            # Create a concise result message
+            note_count = len(processed_notes)
+            if all(isinstance(n, (int, float)) for n in processed_notes):
+                return f"Sent {note_count} notes across {num_bars} bars on channel {channel}"
+            elif all(isinstance(n, list) for n in processed_notes):
+                chord_count = sum(len(chord) for chord in processed_notes if isinstance(chord, list))
+                return f"Sent {note_count} chords ({chord_count} total notes) across {num_bars} bars on channel {channel}"
+            else:
+                return f"Sent sequence of {note_count} MIDI events across {num_bars} bars on channel {channel}"
                    
         except Exception as e:
             return f"Error sending MIDI sequence: {str(e)}"
@@ -181,7 +200,7 @@ Note: The notes will be distributed evenly across the specified number of bars. 
 """
     
     @property
-    def parameters(self):
+    def inputs(self):
         return {
             "notes": {
                 "type": "array",
@@ -190,18 +209,17 @@ Note: The notes will be distributed evenly across the specified number of bars. 
             "num_bars": {
                 "type": "integer",
                 "description": "Number of bars to spread the notes across",
-                "default": 1
+                "default": 1,
+                "nullable": True
             },
             "channel": {
                 "type": "integer",
                 "description": "MIDI channel (0-15) to use for the notes",
-                "default": 0
+                "default": 0,
+                "nullable": True
             }
         }
     
     @property
-    def returns(self):
-        return {
-            "type": "string",
-            "description": "Result of the operation"
-        }
+    def output_type(self):
+        return "string"

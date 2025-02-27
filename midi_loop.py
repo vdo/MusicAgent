@@ -9,13 +9,14 @@ class MidiEventLoop:
     A MIDI event loop that can receive notes from an agent, sync to MIDI clock,
     and play notes to a default output port.
     """
-    def __init__(self, default_tempo=120, time_signature=(4, 4)):
+    def __init__(self, default_tempo=120, time_signature=(4, 4), auto_open_ports=True):
         """
         Initialize the MIDI event loop.
         
         Args:
             default_tempo: Default tempo in BPM if no MIDI clock is present
             time_signature: Time signature as a tuple (numerator, denominator)
+            auto_open_ports: Whether to automatically open MIDI ports
         """
         self.default_tempo = default_tempo
         self.current_tempo = default_tempo
@@ -30,7 +31,16 @@ class MidiEventLoop:
         self.current_bar = 0
         self.ticks_per_bar = self.ppq * self.time_signature[0]  # Ticks per bar
         
-        # Try to open MIDI ports
+        # Initialize ports to None
+        self.input_port = None
+        self.output_port = None
+        
+        # Try to open MIDI ports if auto_open_ports is True
+        if auto_open_ports:
+            self._open_default_ports()
+    
+    def _open_default_ports(self):
+        """Open the default MIDI input and output ports."""
         try:
             available_inputs = mido.get_input_names()
             available_outputs = mido.get_output_names()
