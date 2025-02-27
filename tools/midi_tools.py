@@ -18,6 +18,7 @@ class MidiSequenceTool(Tool):
         """
         super().__init__()
         self.midi_loop = midi_loop
+        self.default_channel = 0  # Default MIDI channel (0-15)
     
     def set_midi_loop(self, midi_loop):
         """
@@ -28,7 +29,7 @@ class MidiSequenceTool(Tool):
         """
         self.midi_loop = midi_loop
     
-    def forward(self, notes, num_bars=1, channel=0):
+    def forward(self, notes, num_bars=1, channel=None):
         """
         Send a sequence of MIDI notes to be spread across the specified number of bars.
         
@@ -40,6 +41,9 @@ class MidiSequenceTool(Tool):
         Returns:
             A string indicating the result of the operation
         """
+        if channel is None:
+            channel = self.default_channel
+        
         if self.midi_loop is None:
             return "Error: MIDI event loop not initialized"
         
