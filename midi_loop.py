@@ -362,9 +362,9 @@ class MidiEventLoop:
         beats_per_bar = self.time_signature[0]
         total_beats = beats_per_bar * num_bars
         
-        # Calculate time intervals between notes
-        num_notes = len(notes)
-        interval = total_beats / num_notes if num_notes > 0 else 1.0
+        # Count events (chords count as one event)
+        num_events = len(notes)
+        interval = total_beats / num_events if num_events > 0 else 1.0
         
         # Clear existing loop if any
         self.clear_loop()
@@ -383,13 +383,14 @@ class MidiEventLoop:
         
         # Process each note or chord
         for i, note_data in enumerate(notes):
-            # Calculate the position of this note in beats
+            # Calculate the position of this event in beats
             position_in_beats = i * interval
             
             # Handle different types of note data
             if isinstance(note_data, list):
                 # This is a chord (list of notes to be played simultaneously)
                 for chord_note in note_data:
+                    # All chord notes start at the same position and can overlap
                     self._process_single_note(chord_note, channel, interval, position_in_beats, default_note_length)
             elif isinstance(note_data, (int, float)):
                 # This is a single note number
@@ -400,12 +401,15 @@ class MidiEventLoop:
             else:
                 print(f"Warning: Invalid note data in sequence: {note_data}")
         
-        print(f"Added {num_notes} note events distributed across {num_bars} bars to the loop")
+        print(f"Added {num_events} note events distributed across {num_bars} bars to the loop")
         
-        # If we're not already running and we have notes to play, start playback
-        if not self.running and len(self.loop_notes) > 0:
-            print("Starting playback automatically")
-            self.running = True
+        # Don't automatically start playback - wait for MIDI start command instead
+        # if not self.running and len(self.loop_notes) > 0:
+        #     print("Starting playback automatically")
+        #     self.running = True
+        
+        if len(self.loop_notes) > 0 and not self.running:
+            print("Notes added to loop. Waiting for MIDI start command to begin playback.")
     
     def _process_single_note(self, note_data, channel, interval, position_in_beats=0, default_note_length=0.8):
         """
@@ -434,8 +438,15 @@ class MidiEventLoop:
             # Add note_on to the loop
             self.add_note_to_loop(note_on)
             
-            # Create note_off message (default duration is 80% of the interval)
-            duration = note_data.get('duration', interval * default_note_length)
+            # Determine note duration - use specified duration or default to a portion of the interval
+            # Limit the default duration to the interval to prevent overlap with next note∆∆
+            if 'duration' in note_data:
+                # If duration is explicitly specified, use it as is
+                duration = note_data['duration']
+            else:
+                # Otherwise calculate based on interval and default_note_length
+                duration = min(interval * default_note_length, interval * 0.95)
+            
             note_off = mido.Message('note_off',
                                    note=note_data.get('note', 60),
                                    velocity=0,
