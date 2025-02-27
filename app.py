@@ -27,8 +27,8 @@ available_outputs = mido.get_output_names()
 available_inputs_with_none = ["None"] + available_inputs
 available_outputs_with_none = ["None"] + available_outputs
 
-# Default MIDI channels (0-15)
-midi_channels = list(range(16))
+# MIDI channels (display as 1-16, while internally using 0-15)
+midi_channels = list(range(1, 17))
 
 model = HfApiModel(
     model_id='Qwen/Qwen2.5-Coder-32B-Instruct',
@@ -44,7 +44,7 @@ all_modes = AllModes()
 # Initialize the MIDI event loop with default tempo and time signature
 midi_loop = MidiEventLoop(default_tempo=120, time_signature=(4, 4), auto_open_ports=False)
 
-# Initialize the MIDI tool with default channel 0
+# Initialize the MIDI tool with default channel 0 (displayed as 1 in UI)
 midi_sequence = MidiSequenceTool(midi_loop=midi_loop)
 
 with open(os.path.join(CURRENT_DIR, "prompts.yaml"), 'r') as stream:
@@ -104,7 +104,7 @@ def select_midi_output(port_name):
 
 # Function to handle MIDI channel selection
 def select_midi_channel(channel):
-    midi_sequence.default_channel = channel
+    midi_sequence.default_channel = channel - 1  # Convert 1-16 to 0-15
     return f"MIDI channel set to: {channel}"
 
 # Function to refresh available MIDI devices
@@ -152,7 +152,7 @@ with gr.Blocks(title="MusicAgent") as ui:
             with gr.Column():
                 midi_channel_dropdown = gr.Dropdown(
                     choices=midi_channels,
-                    value=0,
+                    value=1,
                     label="MIDI Channel"
                 )
                 midi_channel_status = gr.Textbox(label="Channel Status", interactive=False)

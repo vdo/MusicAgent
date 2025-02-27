@@ -217,7 +217,7 @@ class MidiEventLoop:
         sorted_notes = sorted(self.loop_notes, key=lambda note: note.time if hasattr(note, 'time') else 0)
         
         # Play notes that should be played at this beat position
-        for note in enumerate(sorted_notes):
+        for note in sorted_notes:
             # Create a unique identifier for each note event that includes the note type, note number, and position
             note_id = (note.type, note.note, note.time)
             

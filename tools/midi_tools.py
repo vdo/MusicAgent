@@ -18,7 +18,7 @@ class MidiSequenceTool(Tool):
         """
         super().__init__()
         self.midi_loop = midi_loop
-        self.default_channel = 0  # Default MIDI channel (0-15)
+        self.default_channel = 0  # Default MIDI channel (displayed as 1 to users)
         self.output_device = None  # Selected output device from UI
     
     def set_midi_loop(self, midi_loop):
@@ -46,7 +46,7 @@ class MidiSequenceTool(Tool):
         Args:
             notes: List of MIDI note numbers or dictionaries with note, velocity, etc.
             num_bars: Number of bars to spread the notes across
-            channel: MIDI channel to use for the notes
+            channel: MIDI channel to use for the notes (1-16, internally converted to 0-15)
             quantize: Whether to quantize the notes to the MIDI clock
             default_note_length: Default length of notes as a fraction of the interval between notes (0.0-1.0)
             
@@ -55,6 +55,10 @@ class MidiSequenceTool(Tool):
         """
         if channel is None:
             channel = self.default_channel
+        else:
+            # Convert from 1-16 display to 0-15 internal if needed
+            if 1 <= channel <= 16:
+                channel = channel - 1
         
         if self.midi_loop is None:
             return "Error: MIDI event loop not initialized"
@@ -73,7 +77,7 @@ class MidiSequenceTool(Tool):
             
             channel = int(channel)
             if channel < 0 or channel > 15:
-                return f"Error: Channel value {channel} is out of range (0-15)"
+                return f"Error: Channel value {channel + 1} is out of range (1-16)"
             
             # Check if MIDI clock is present
             midi_clock_status = "using internal clock"
@@ -132,12 +136,12 @@ class MidiSequenceTool(Tool):
             tempo_info = f" at {self.midi_loop.current_tempo:.1f} BPM"
             
             if all(isinstance(n, (int, float)) for n in processed_notes):
-                return f"Sent {note_count} notes across {num_bars} bars on channel {channel}{tempo_info} ({midi_clock_status})"
+                return f"Sent {note_count} notes across {num_bars} bars on channel {channel + 1}{tempo_info} ({midi_clock_status})"
             elif all(isinstance(n, list) for n in processed_notes):
                 chord_count = sum(len(chord) for chord in processed_notes if isinstance(chord, list))
-                return f"Sent {note_count} chords ({chord_count} total notes) across {num_bars} bars on channel {channel}{tempo_info} ({midi_clock_status})"
+                return f"Sent {note_count} chords ({chord_count} total notes) across {num_bars} bars on channel {channel + 1}{tempo_info} ({midi_clock_status})"
             else:
-                return f"Sent sequence of {note_count} MIDI events across {num_bars} bars on channel {channel}{tempo_info} ({midi_clock_status})"
+                return f"Sent sequence of {note_count} MIDI events across {num_bars} bars on channel {channel + 1}{tempo_info} ({midi_clock_status})"
                    
         except Exception as e:
             return f"Error sending MIDI sequence: {str(e)}"
@@ -213,7 +217,7 @@ send_midi_sequence(notes=[60, 62, 64, 65, 67, 69, 71, 72, 71, 69, 67, 65, 64, 62
 
 7. Using a different MIDI channel (e.g., for different instruments):
 ```python
-send_midi_sequence(notes=[60, 64, 67, 72], num_bars=1, channel=2)
+send_midi_sequence(notes=[60, 64, 67, 72], num_bars=1, channel=3)  # Channel 3 (internally converted to channel 2)
 ```
 
 8. Common chord progressions (C-F-G-C in root position):
@@ -254,7 +258,7 @@ Note: The notes will be distributed evenly across the specified number of bars. 
             },
             "channel": {
                 "type": "number",
-                "description": "MIDI channel to use (0-15)",
+                "description": "MIDI channel to use (1-16)",
                 "default": "1",
                 "nullable": True
             },
