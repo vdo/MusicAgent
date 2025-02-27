@@ -120,7 +120,7 @@ midi_loop.start()
 # Create the Gradio Blocks interface
 with gr.Blocks(title="MusicAgent") as ui:
     gr.Markdown("# MusicAgent")
-    gr.Markdown("A MIDI control AI agent with some musical hallucinations.")
+    gr.Markdown("A MIDI control smolagent with some musical hallucinations.")
     
     with gr.Accordion("MIDI Settings", open=False):
         with gr.Row():

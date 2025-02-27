@@ -12,11 +12,14 @@ tags:
 - agent
 - music
 - mingus
+- midi
 ---
 
 Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
 
-# MusicAgent: A MIDI control AI agent with some musical hallucinations.
+# MusicAgent
+## A MIDI control smolagent with some musical hallucinations.
+
 
 ## Overview
 
@@ -27,7 +30,7 @@ MusicAgent is an AI-powered assistant designed to help musicians, producers, and
 ### Music Theory Assistance
 - **Chord Analysis**: Identify and explain chord structures, inversions, and functions
 - **Scale and Mode Information**: Get detailed information about scales and modes in music
-- **Music Theory Concepts**: Learn about harmony, rhythm, melody, and other music theory concepts
+- **Chord Progression Tool**: Generate chord progressions based on a given root note or chord
 
 ### MIDI Control and Interaction
 - **MIDI Device Selection**: Choose from available MIDI input and output devices directly from the UI
@@ -71,5 +74,6 @@ MusicAgent is built on a modular architecture that combines several key componen
 ## TODO
 
 * Improve system prompt
+* Add cadences, rhythms, and other musical concepts (RAG?)
 * LLM selection and integration (OpenAI, Anthropic, etc.)
 * Integration in patchbox OS for Raspberry Pi.
