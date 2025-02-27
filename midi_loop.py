@@ -209,11 +209,27 @@ class MidiEventLoop:
         if not self.running or not self.output_port:
             return
         
-        # Play all notes in the loop
-        for note in self.loop_notes:
+        current_time = time.time()
+        quarter_note_duration = 60.0 / self.current_tempo
+        
+        # Get the current beat position
+        current_beat = (self.tick_counter / self.ppq) % (self.time_signature[0] * 4)  # 4 beats per bar
+        
+        # Sort notes by their time attribute
+        sorted_notes = sorted(self.loop_notes, key=lambda note: note.time if hasattr(note, 'time') else 0)
+        
+        # Play notes that should be played at this beat position
+        for note in sorted_notes:
             # Clone the message to avoid modifying the original
             if isinstance(note, mido.Message):
-                self.output_port.send(note.copy())
+                # Calculate if this note should be played at this beat
+                note_beat_position = note.time % (self.time_signature[0] * 4)
+                
+                # If we're close to the note's beat position, play it
+                # Use a small tolerance to account for timing jitter
+                if abs(current_beat - note_beat_position) < 0.1 or (current_beat < 0.1 and note_beat_position > (self.time_signature[0] * 4 - 0.1)):
+                    note_copy = note.copy()
+                    self.output_port.send(note_copy)
     
     def add_note_to_loop(self, note):
         """
@@ -223,6 +239,9 @@ class MidiEventLoop:
             note: MIDI note message to add to the loop
         """
         if isinstance(note, mido.Message):
+            # Make sure the note has a time attribute
+            if not hasattr(note, 'time'):
+                note.time = 0
             self.loop_notes.append(note)
         else:
             print(f"Warning: Tried to add invalid MIDI message to loop: {note}")
@@ -329,7 +348,7 @@ class MidiEventLoop:
         
         # Calculate time intervals between notes
         num_notes = len(notes)
-        interval = total_beats / num_notes
+        interval = total_beats / num_notes if num_notes > 0 else 1.0
         
         # Clear existing loop if any
         self.clear_loop()
@@ -352,13 +371,13 @@ class MidiEventLoop:
             if isinstance(note_data, list):
                 # This is a chord (list of notes to be played simultaneously)
                 for chord_note in note_data:
-                    self._process_single_note(chord_note, channel, interval)
+                    self._process_single_note(chord_note, channel, interval, position_in_beats)
             elif isinstance(note_data, (int, float)):
                 # This is a single note number
-                self._process_single_note(note_data, channel, interval)
+                self._process_single_note(note_data, channel, interval, position_in_beats)
             elif isinstance(note_data, dict):
                 # This is a note dictionary
-                self._process_single_note(note_data, channel, interval)
+                self._process_single_note(note_data, channel, interval, position_in_beats)
             else:
                 print(f"Warning: Invalid note data in sequence: {note_data}")
         
@@ -369,7 +388,7 @@ class MidiEventLoop:
             print("Starting playback automatically")
             self.running = True
     
-    def _process_single_note(self, note_data, channel, interval):
+    def _process_single_note(self, note_data, channel, interval, position_in_beats=0):
         """
         Process a single note and add it to the loop.
         
@@ -377,6 +396,7 @@ class MidiEventLoop:
             note_data: Note data (number or dictionary)
             channel: MIDI channel to use
             interval: Time interval for note duration
+            position_in_beats: Position of the note in beats (for timing)
         """
         # If note_data is just a number, convert it to a dictionary
         if isinstance(note_data, (int, float)):
@@ -388,7 +408,8 @@ class MidiEventLoop:
             note_on = mido.Message('note_on',
                                   note=note_data.get('note', 60),
                                   velocity=note_data.get('velocity', 64),
-                                  channel=note_data.get('channel', channel))
+                                  channel=note_data.get('channel', channel),
+                                  time=position_in_beats)
             
             # Add note_on to the loop
             self.add_note_to_loop(note_on)
@@ -398,7 +419,8 @@ class MidiEventLoop:
             note_off = mido.Message('note_off',
                                    note=note_data.get('note', 60),
                                    velocity=0,
-                                   channel=note_data.get('channel', channel))
+                                   channel=note_data.get('channel', channel),
+                                   time=position_in_beats + duration)
             
             # Add note_off to the loop
             self.add_note_to_loop(note_off)
