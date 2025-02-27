@@ -15,10 +15,8 @@ tags:
 - midi
 ---
 
-Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
-
 # MusicAgent
-## A MIDI control smolagent with some musical hallucinations.
+** A MIDI control smolagent with some musical hallucinations.**
 
 
 ## Overview
@@ -76,4 +74,7 @@ MusicAgent is built on a modular architecture that combines several key componen
 * Improve system prompt
 * Add cadences, rhythms, and other musical concepts (RAG?)
 * LLM selection and integration (OpenAI, Anthropic, etc.)
-* Integration in patchbox OS for Raspberry Pi.
+* Integration in patchbox OS for Raspberry Pi (as a module)
+
+## Future Work
+* Sample generation and playback using PiSound output. 
