@@ -1,0 +1,207 @@
+from smolagents import Tool
+import mido
+import sys
+import os
+
+# Add parent directory to sys.path to import midi_loop
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from midi_loop import MidiEventLoop
+
+class MidiSequenceTool(Tool):
+    """Tool for sending sequences of MIDI notes to be spread across bars."""
+    
+    def __init__(self, midi_loop=None):
+        """
+        Initialize the MidiSequenceTool.
+        
+        Args:
+            midi_loop: MidiEventLoop instance to send notes to
+        """
+        super().__init__()
+        self.midi_loop = midi_loop
+    
+    def set_midi_loop(self, midi_loop):
+        """
+        Set the MIDI event loop to send notes to.
+        
+        Args:
+            midi_loop: MidiEventLoop instance
+        """
+        self.midi_loop = midi_loop
+    
+    def __call__(self, notes, num_bars=1, channel=0):
+        """
+        Send a sequence of MIDI notes to be spread across the specified number of bars.
+        
+        Args:
+            notes: List of MIDI note numbers or dictionaries with note, velocity, etc.
+            num_bars: Number of bars to spread the notes across
+            channel: MIDI channel to use for the notes
+            
+        Returns:
+            A string indicating the result of the operation
+        """
+        if self.midi_loop is None:
+            return "Error: MIDI event loop not initialized"
+        
+        try:
+            # Validate inputs
+            if not isinstance(notes, list):
+                return "Error: Notes must be a list of note numbers or dictionaries"
+            
+            if len(notes) == 0:
+                return "Error: Notes list is empty"
+            
+            num_bars = int(num_bars)
+            if num_bars <= 0:
+                return f"Error: Number of bars {num_bars} must be positive"
+            
+            channel = int(channel)
+            if channel < 0 or channel > 15:
+                return f"Error: Channel value {channel} is out of range (0-15)"
+            
+            # Validate and process each note
+            processed_notes = []
+            for i, note_data in enumerate(notes):
+                if isinstance(note_data, (int, float)):
+                    note = int(note_data)
+                    if note < 0 or note > 127:
+                        return f"Error: Note value {note} at position {i} is out of range (0-127)"
+                    processed_notes.append(note)
+                elif isinstance(note_data, dict):
+                    if 'note' not in note_data:
+                        return f"Error: Note dictionary at position {i} is missing 'note' field"
+                    
+                    note = int(note_data['note'])
+                    if note < 0 or note > 127:
+                        return f"Error: Note value {note} at position {i} is out of range (0-127)"
+                    
+                    if 'velocity' in note_data:
+                        velocity = int(note_data['velocity'])
+                        if velocity < 0 or velocity > 127:
+                            return f"Error: Velocity value {velocity} at position {i} is out of range (0-127)"
+                    
+                    processed_notes.append(note_data)
+                else:
+                    return f"Error: Invalid note data at position {i}: {note_data}"
+            
+            # Send the sequence to the MIDI event loop
+            self.midi_loop.receive_notes_sequence(processed_notes, num_bars, channel)
+            
+            return f"Sent sequence of {len(processed_notes)} MIDI notes spread across {num_bars} bars on channel {channel}"
+                   
+        except Exception as e:
+            return f"Error sending MIDI sequence: {str(e)}"
+    
+    @property
+    def name(self):
+        return "send_midi_sequence"
+    
+    @property
+    def description(self):
+        return """Send a sequence of MIDI notes to be spread across a specified number of bars.
+
+This tool allows you to send musical patterns as sequences of MIDI notes that will be automatically distributed evenly across a specified number of bars.
+
+MIDI Notes Reference:
+- Middle C is note number 60
+- Each semitone up/down is +/- 1 (e.g., C# is 61, B is 59)
+- Full octave is +/- 12 notes
+- Range: 0-127 (C-1 to G9)
+
+Common Notes:
+- C4 (Middle C): 60
+- D4: 62
+- E4: 64
+- F4: 65
+- G4: 67
+- A4: 69
+- B4: 71
+- C5: 72
+
+Examples:
+
+1. Basic C Major Scale (simple note numbers):
+```python
+send_midi_sequence(notes=[60, 62, 64, 65, 67, 69, 71, 72], num_bars=1)
+```
+
+2. C Major Chord Arpeggio (C-E-G-C):
+```python
+send_midi_sequence(notes=[60, 64, 67, 72], num_bars=1)
+```
+
+3. C Minor Chord Arpeggio (C-Eb-G-C):
+```python
+send_midi_sequence(notes=[60, 63, 67, 72], num_bars=1)
+```
+
+4. Notes with varying velocities (loudness):
+```python
+send_midi_sequence(notes=[
+    {'note': 60, 'velocity': 100},  # C4 loud
+    {'note': 64, 'velocity': 64},   # E4 medium
+    {'note': 67, 'velocity': 32},   # G4 soft
+    {'note': 72, 'velocity': 127}   # C5 very loud
+], num_bars=1)
+```
+
+5. Complex rhythm pattern with custom durations:
+```python
+send_midi_sequence(notes=[
+    {'note': 60, 'velocity': 100, 'duration': 0.5},  # C4 with longer duration
+    {'note': 62, 'velocity': 80, 'duration': 0.25},  # D4 with shorter duration
+    {'note': 64, 'velocity': 90, 'duration': 0.5},   # E4 with longer duration
+    {'note': 65, 'velocity': 70, 'duration': 0.25},  # F4 with shorter duration
+    {'note': 67, 'velocity': 100, 'duration': 1.0}   # G4 with longest duration
+], num_bars=2)
+```
+
+6. Melody spread across 4 bars:
+```python
+send_midi_sequence(notes=[60, 62, 64, 65, 67, 69, 71, 72, 71, 69, 67, 65, 64, 62, 60], num_bars=4)
+```
+
+7. Using a different MIDI channel (e.g., for different instruments):
+```python
+send_midi_sequence(notes=[60, 64, 67, 72], num_bars=1, channel=2)
+```
+
+8. Common chord progressions (C-F-G-C in root position):
+```python
+send_midi_sequence(notes=[
+    [60, 64, 67],  # C major
+    [65, 69, 72],  # F major
+    [67, 71, 74],  # G major
+    [60, 64, 67]   # C major
+], num_bars=4)
+```
+
+Note: The notes will be distributed evenly across the specified number of bars. If you want more precise timing control, consider using more detailed note dictionaries with duration values.
+"""
+    
+    @property
+    def parameters(self):
+        return {
+            "notes": {
+                "type": "array",
+                "description": "List of MIDI note numbers (0-127) or dictionaries with note, velocity, etc."
+            },
+            "num_bars": {
+                "type": "integer",
+                "description": "Number of bars to spread the notes across",
+                "default": 1
+            },
+            "channel": {
+                "type": "integer",
+                "description": "MIDI channel (0-15) to use for the notes",
+                "default": 0
+            }
+        }
+    
+    @property
+    def returns(self):
+        return {
+            "type": "string",
+            "description": "Result of the operation"
+        }

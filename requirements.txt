@@ -4,3 +4,5 @@ markdownify
 smolagents
 smolagents[gradio]
 mingus
+mido
+python-rtmidi
