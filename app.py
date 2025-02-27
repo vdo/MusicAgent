@@ -65,6 +65,7 @@ agent = CodeAgent(
     verbosity_level=2,
     grammar=None,
     planning_interval=None,
+    additional_authorized_imports=["queue", "collections", "time", "statistics", "stat", "math", "unicodedata", "random", "itertools", "re", "datetime", "mingus"]
 )
 
 # Function to handle MIDI input port selection
