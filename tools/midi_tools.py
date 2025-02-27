@@ -39,7 +39,7 @@ class MidiSequenceTool(Tool):
         """
         self.output_device = None if device_name == "None" else device_name
     
-    def forward(self, notes, num_bars=1, channel=None, quantize=True):
+    def forward(self, notes, num_bars=1, channel=None, quantize=True, default_note_length=0.8):
         """
         Send a sequence of MIDI notes to be spread across the specified number of bars.
         
@@ -48,6 +48,7 @@ class MidiSequenceTool(Tool):
             num_bars: Number of bars to spread the notes across
             channel: MIDI channel to use for the notes
             quantize: Whether to quantize the notes to the MIDI clock
+            default_note_length: Default length of notes as a fraction of the interval between notes (0.0-1.0)
             
         Returns:
             A string indicating the result of the operation
@@ -122,7 +123,8 @@ class MidiSequenceTool(Tool):
                 num_bars, 
                 channel, 
                 quantize, 
-                output_device=self.output_device
+                output_device=self.output_device,
+                default_note_length=default_note_length
             )
             
             # Create a concise result message
@@ -224,7 +226,16 @@ send_midi_sequence(notes=[
 ], num_bars=4)
 ```
 
-Note: The notes will be distributed evenly across the specified number of bars. If you want more precise timing control, consider using more detailed note dictionaries with duration values.
+9. Adjusting the default note length:
+```python
+# Shorter staccato notes (30% of interval)
+send_midi_sequence(notes=[60, 62, 64, 65, 67], num_bars=1, default_note_length=0.3)
+
+# Longer legato notes (95% of interval)
+send_midi_sequence(notes=[60, 62, 64, 65, 67], num_bars=1, default_note_length=0.95)
+```
+
+Note: The notes will be distributed evenly across the specified number of bars. If you want more precise timing control, consider using more detailed note dictionaries with duration values. The default_note_length parameter controls how long each note plays as a fraction of the interval between notes (default is 0.8 or 80%).
 """
     
     @property
@@ -251,6 +262,12 @@ Note: The notes will be distributed evenly across the specified number of bars. 
                 "type": "boolean",
                 "description": "Whether to quantize the notes to the MIDI clock",
                 "default": True,
+                "nullable": True
+            },
+            "default_note_length": {
+                "type": "number",
+                "description": "Default length of notes as a fraction of the interval between notes (0.0-1.0)",
+                "default": 0.8,
                 "nullable": True
             }
         }
