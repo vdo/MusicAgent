@@ -204,15 +204,22 @@ with gr.Blocks(title="MusicAgent") as ui:
         # Add user message to chat history
         chat_history.append({"role": "user", "content": message})
         
-        # Get response from agent
-        response = agent.run(message)
+        # Create empty assistant message for streaming
+        chat_history.append({"role": "assistant", "content": ""})
         
-        # Add agent response to chat history
-        chat_history.append({"role": "assistant", "content": response})
+        # Get response from agent with streaming
+        response_text = ""
+        
+        # Start the agent in a separate thread to get tokens one by one
+        for token in agent.run_stream(message):
+            response_text += token
+            # Yield the updated chat history with the partial response
+            chat_history[-1]["content"] = response_text
+            yield "", chat_history
         
         return "", chat_history
     
-    msg.submit(respond, [msg, chatbot], [msg, chatbot])
+    msg.submit(respond, [msg, chatbot], [msg, chatbot], queue=True)
 
 try:
     # Create a variable to store the share URL
