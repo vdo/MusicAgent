@@ -33,6 +33,8 @@ MusicAgent is an AI-powered assistant designed to help musicians, producers, and
 - **MIDI Device Selection**: Choose from available MIDI input and output devices directly from the UI
 - **MIDI Channel Selection**: Select which MIDI channel to use for sending messages
 - **MIDI Sequence Tool**: Send note sequences, chord progressions, and complex rhythmic patterns to your MIDI devices
+## Integration with Patchbox OS and PiSound
+- **TBD**
 
 ## How It Works
 
