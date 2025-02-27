@@ -27,6 +27,7 @@ class MidiEventLoop:
         self.running = False
         self.note_queue = queue.Queue()
         self.loop_notes = []
+        self.played_notes = set()  # Set to track which notes have been played using (type, note, time) tuples
         self.midi_clock_present = False
         self.tick_counter = 0
         self.ppq = 24  # Pulses per quarter note (standard MIDI clock)
@@ -208,10 +209,7 @@ class MidiEventLoop:
         """Play any notes that are scheduled to be played."""
         if not self.running or not self.output_port:
             return
-        
-        current_time = time.time()
-        quarter_note_duration = 60.0 / self.current_tempo
-        
+    
         # Get the current beat position
         current_beat = (self.tick_counter / self.ppq) % (self.time_signature[0] * 4)  # 4 beats per bar
         
@@ -219,24 +217,25 @@ class MidiEventLoop:
         sorted_notes = sorted(self.loop_notes, key=lambda note: note.time if hasattr(note, 'time') else 0)
         
         # Play notes that should be played at this beat position
-        for note in sorted_notes:
+        for note in enumerate(sorted_notes):
+            # Create a unique identifier for each note event that includes the note type, note number, and position
+            note_id = (note.type, note.note, note.time)
+            
             # Skip notes that have already been played
-            if hasattr(note, 'played') and note.played:
+            if note_id in self.played_notes:
                 continue
                 
-            # Clone the message to avoid modifying the original
-            if isinstance(note, mido.Message):
-                # Calculate if this note should be played at this beat
-                note_beat_position = note.time % (self.time_signature[0] * 4)
+            # Calculate if this note should be played at this beat
+            note_beat_position = note.time % (self.time_signature[0] * 4)
+            
+            # If we're close to the note's beat position, play it
+            # Use a small tolerance to account for timing jitter
+            if abs(current_beat - note_beat_position) < 0.1 or (current_beat < 0.1 and note_beat_position > (self.time_signature[0] * 4 - 0.1)):
+                # Send the note message to the output port
+                self.output_port.send(note)
                 
-                # If we're close to the note's beat position, play it
-                # Use a small tolerance to account for timing jitter
-                if abs(current_beat - note_beat_position) < 0.1 or (current_beat < 0.1 and note_beat_position > (self.time_signature[0] * 4 - 0.1)):
-                    note_copy = note.copy()
-                    self.output_port.send(note_copy)
-                    
-                    # Mark the note as played
-                    note.played = True
+                # Mark the note as played using a tuple of its properties
+                self.played_notes.add(note_id)
     
     def add_note_to_loop(self, note):
         """
@@ -250,19 +249,18 @@ class MidiEventLoop:
             if not hasattr(note, 'time'):
                 note.time = 0
                 
-            # Initialize the played status to False
-            note.played = False
-                
-            self.loop_notes.append(note)
+            # Only add valid note_on or note_off messages that have a note number
+            if note.type in ('note_on', 'note_off') and hasattr(note, 'note'):
+                self.loop_notes.append(note)
+            else:
+                print(f"Warning: Ignoring MIDI message without proper note properties: {note}")
         else:
             print(f"Warning: Tried to add invalid MIDI message to loop: {note}")
     
     def clear_loop(self):
         """Clear all notes from the loop."""
-        # Reset the played status of all notes in case we want to reuse them
-        for note in self.loop_notes:
-            if hasattr(note, 'played'):
-                note.played = False
+        # Clear the played notes set
+        self.played_notes.clear()
         
         # Clear the loop
         self.loop_notes = []
@@ -370,6 +368,9 @@ class MidiEventLoop:
         
         # Clear existing loop if any
         self.clear_loop()
+        
+        # Reset the played notes set
+        self.played_notes.clear()
         
         # If quantize is enabled and we have MIDI clock, wait for the next bar
         if quantize and self.midi_clock_present and self.running:
