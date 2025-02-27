@@ -203,7 +203,7 @@ with gr.Blocks(title="MusicAgent") as ui:
     msg.submit(respond, [msg, chatbot], [msg, chatbot])
 
 try:
-    ui.launch()
+    ui.launch(share=True)
 finally:
     # Make sure to stop the MIDI event loop when the app is closed
     midi_loop.stop()
