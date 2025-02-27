@@ -29,7 +29,7 @@ class MidiSequenceTool(Tool):
         """
         self.midi_loop = midi_loop
     
-    def forward(self, notes, num_bars=1, channel=None):
+    def forward(self, notes, num_bars=1, channel=None, quantize=True):
         """
         Send a sequence of MIDI notes to be spread across the specified number of bars.
         
@@ -37,6 +37,7 @@ class MidiSequenceTool(Tool):
             notes: List of MIDI note numbers or dictionaries with note, velocity, etc.
             num_bars: Number of bars to spread the notes across
             channel: MIDI channel to use for the notes
+            quantize: Whether to quantize the notes to the MIDI clock
             
         Returns:
             A string indicating the result of the operation
@@ -62,6 +63,11 @@ class MidiSequenceTool(Tool):
             channel = int(channel)
             if channel < 0 or channel > 15:
                 return f"Error: Channel value {channel} is out of range (0-15)"
+            
+            # Check if MIDI clock is present
+            midi_clock_status = "using internal clock"
+            if self.midi_loop.midi_clock_present:
+                midi_clock_status = "synchronized to external MIDI clock"
             
             # Validate and process each note
             processed_notes = []
@@ -96,22 +102,24 @@ class MidiSequenceTool(Tool):
                             chord_notes.append(note)
                         else:
                             return f"Error: Invalid note in chord at position {i}, note {j}: {chord_note}"
-                    processed_notes.append(note_data)
+                    processed_notes.append(chord_notes)
                 else:
                     return f"Error: Invalid note data at position {i}: {note_data}"
             
             # Send the sequence to the MIDI event loop
-            self.midi_loop.receive_notes_sequence(processed_notes, num_bars, channel)
+            self.midi_loop.receive_notes_sequence(processed_notes, num_bars, channel, quantize)
             
             # Create a concise result message
             note_count = len(processed_notes)
+            tempo_info = f" at {self.midi_loop.current_tempo:.1f} BPM"
+            
             if all(isinstance(n, (int, float)) for n in processed_notes):
-                return f"Sent {note_count} notes across {num_bars} bars on channel {channel}"
+                return f"Sent {note_count} notes across {num_bars} bars on channel {channel}{tempo_info} ({midi_clock_status})"
             elif all(isinstance(n, list) for n in processed_notes):
                 chord_count = sum(len(chord) for chord in processed_notes if isinstance(chord, list))
-                return f"Sent {note_count} chords ({chord_count} total notes) across {num_bars} bars on channel {channel}"
+                return f"Sent {note_count} chords ({chord_count} total notes) across {num_bars} bars on channel {channel}{tempo_info} ({midi_clock_status})"
             else:
-                return f"Sent sequence of {note_count} MIDI events across {num_bars} bars on channel {channel}"
+                return f"Sent sequence of {note_count} MIDI events across {num_bars} bars on channel {channel}{tempo_info} ({midi_clock_status})"
                    
         except Exception as e:
             return f"Error sending MIDI sequence: {str(e)}"
@@ -207,20 +215,24 @@ Note: The notes will be distributed evenly across the specified number of bars. 
     def inputs(self):
         return {
             "notes": {
-                "type": "array",
-                "description": "List of MIDI note numbers (0-127) or dictionaries with note, velocity, etc."
+                "type": "list",
+                "description": "List of MIDI note numbers (0-127) or dictionaries with note, velocity, etc.",
+                "required": True
             },
             "num_bars": {
-                "type": "integer",
+                "type": "number",
                 "description": "Number of bars to spread the notes across",
-                "default": 1,
-                "nullable": True
+                "default": 1
             },
             "channel": {
-                "type": "integer",
-                "description": "MIDI channel (0-15) to use for the notes",
-                "default": 0,
-                "nullable": True
+                "type": "number",
+                "description": "MIDI channel to use (0-15)",
+                "default": "Uses the default channel set in the UI"
+            },
+            "quantize": {
+                "type": "boolean",
+                "description": "Whether to quantize the notes to the MIDI clock",
+                "default": True
             }
         }
     

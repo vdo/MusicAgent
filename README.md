@@ -16,7 +16,7 @@ tags:
 
 Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
 
-# MusicAgent: Your AI Music Theory and MIDI Assistant
+# MusicAgent: A MIDI control AI agent with some musical hallucinations.
 
 ## Overview
 

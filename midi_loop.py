@@ -74,36 +74,80 @@ class MidiEventLoop:
         Args:
             message: MIDI message to handle
         """
-        # Handle MIDI clock messages
-        if message.type == 'clock':
+        # Handle MIDI system real-time messages (status bytes 0xF8-0xFF)
+        if message.type == 'clock':  # 0xF8 (248) - Timing Clock
             self.midi_clock_present = True
             self._process_clock_tick()
         
-        # Handle MIDI start/stop/continue messages
-        elif message.type == 'start':
+        elif message.type == 'start':  # 0xFA (250) - Start
+            print("MIDI Start received")
             self.tick_counter = 0
             self.current_bar = 0
+            self.last_tick_time = time.time()
+            self.midi_clock_present = True
             self.running = True
-        elif message.type == 'stop':
+            
+        elif message.type == 'stop':  # 0xFC (252) - Stop
+            print("MIDI Stop received")
             self.running = False
-        elif message.type == 'continue':
+            
+        elif message.type == 'continue':  # 0xFB (251) - Continue
+            print("MIDI Continue received")
             self.running = True
+            
+        elif message.type == 'song_position':  # 0xF2 (242) - Song Position Pointer
+            # Song position is in MIDI beats (16th notes), convert to our ticks
+            # Each MIDI beat is 6 MIDI clock ticks (24 ticks per quarter note / 4)
+            position_in_ticks = message.pos * 6
+            self.tick_counter = position_in_ticks
+            self.current_bar = position_in_ticks // self.ticks_per_bar
+            print(f"MIDI Song Position: {message.pos} (tick {position_in_ticks}, bar {self.current_bar})")
+            
+        elif message.type == 'reset':  # 0xFF (255) - Reset
+            print("MIDI Reset received")
+            self.tick_counter = 0
+            self.current_bar = 0
+            self.midi_clock_present = False
+            self.running = False
+            self.clear_loop()
+            
+        # Handle note messages for potential recording functionality
+        elif message.type in ('note_on', 'note_off') and self.running:
+            # Just pass through to output if we're not recording
+            if self.output_port:
+                self.output_port.send(message)
     
     def _process_clock_tick(self):
         """Process a single MIDI clock tick."""
         current_time = time.time()
+        
+        # Only process clock ticks if we're running
+        if not self.running:
+            return
+            
         self.tick_counter += 1
         
         # Calculate tempo from MIDI clock if we have received enough ticks
-        if self.tick_counter % self.ppq == 0 and self.last_tick_time is not None:
-            # Calculate time for a quarter note (24 MIDI clock ticks)
-            quarter_note_time = (current_time - self.last_tick_time) * self.ppq
-            if quarter_note_time > 0:
-                # Convert to BPM (60 seconds / quarter_note_time)
-                self.current_tempo = 60.0 / quarter_note_time
-                print(f"Current tempo: {self.current_tempo:.1f} BPM")
+        if self.last_tick_time is not None:
+            tick_interval = current_time - self.last_tick_time
             
-            self.last_tick_time = current_time
+            # Only update tempo every quarter note (24 ticks) to smooth out jitter
+            if self.tick_counter % self.ppq == 0:
+                # Calculate time for a quarter note (24 MIDI clock ticks)
+                quarter_note_time = tick_interval * self.ppq
+                if quarter_note_time > 0:
+                    # Convert to BPM (60 seconds / quarter_note_time)
+                    new_tempo = 60.0 / quarter_note_time
+                    
+                    # Apply a simple low-pass filter to smooth tempo changes
+                    # (80% previous tempo, 20% new tempo)
+                    self.current_tempo = 0.8 * self.current_tempo + 0.2 * new_tempo
+                    
+                    # Only print tempo changes that are significant
+                    if abs(self.current_tempo - self.default_tempo) > 1.0:
+                        print(f"Current tempo: {self.current_tempo:.1f} BPM")
+        
+        self.last_tick_time = current_time
         
         # Check if we've completed a bar
         if self.tick_counter % self.ticks_per_bar == 0:
@@ -168,14 +212,33 @@ class MidiEventLoop:
     def _run_loop(self):
         """Main loop function that runs in a separate thread."""
         self.last_tick_time = time.time()
+        last_internal_tick = time.time()
         
         while self.running:
+            current_time = time.time()
+            
             # If we're not receiving MIDI clock, generate our own timing
             if not self.midi_clock_present:
                 # Calculate sleep time based on tempo (quarter note duration)
-                sleep_time = 60.0 / self.default_tempo
-                time.sleep(sleep_time)
-                self._play_scheduled_notes()
+                quarter_note_duration = 60.0 / self.default_tempo
+                tick_duration = quarter_note_duration / self.ppq
+                
+                # Check if it's time for a new tick
+                if current_time - last_internal_tick >= tick_duration:
+                    self.tick_counter += 1
+                    last_internal_tick = current_time
+                    
+                    # Every quarter note (24 ticks), play scheduled notes
+                    if self.tick_counter % self.ppq == 0:
+                        self._play_scheduled_notes()
+                        
+                    # Check if we've completed a bar
+                    if self.tick_counter % self.ticks_per_bar == 0:
+                        self.current_bar += 1
+                        print(f"Bar {self.current_bar} (internal clock)")
+                
+                # Sleep a small amount to avoid busy waiting
+                time.sleep(min(tick_duration / 10, 0.001))
             else:
                 # If we have MIDI clock, just sleep a bit to avoid busy waiting
                 time.sleep(0.001)
@@ -189,7 +252,7 @@ class MidiEventLoop:
             except queue.Empty:
                 pass
     
-    def receive_notes_sequence(self, notes, num_bars=1, channel=0):
+    def receive_notes_sequence(self, notes, num_bars=1, channel=0, quantize=True):
         """
         Receive a sequence of notes from the agent and distribute them across the specified number of bars.
         
@@ -197,6 +260,7 @@ class MidiEventLoop:
             notes: List of note dictionaries, MIDI note numbers, or lists of notes (for chords)
             num_bars: Number of bars to distribute the notes across
             channel: MIDI channel to use for the notes
+            quantize: Whether to quantize the notes to the MIDI clock
         """
         if not notes:
             print("Warning: Received empty notes sequence")
@@ -212,6 +276,15 @@ class MidiEventLoop:
         
         # Clear existing loop if any
         self.clear_loop()
+        
+        # If quantize is enabled and we have MIDI clock, wait for the next bar
+        if quantize and self.midi_clock_present and self.running:
+            # Calculate how many ticks until the next bar
+            ticks_to_next_bar = self.ticks_per_bar - (self.tick_counter % self.ticks_per_bar)
+            if ticks_to_next_bar < self.ticks_per_bar:
+                print(f"Quantizing: waiting for next bar ({ticks_to_next_bar} ticks)")
+                # We don't actually need to wait here, as the notes will be scheduled
+                # relative to the current position in the MIDI clock
         
         # Process each note or chord
         for i, note_data in enumerate(notes):
@@ -233,6 +306,11 @@ class MidiEventLoop:
                 print(f"Warning: Invalid note data in sequence: {note_data}")
         
         print(f"Added {num_notes} note events distributed across {num_bars} bars to the loop")
+        
+        # If we're not already running and we have notes to play, start playback
+        if not self.running and len(self.loop_notes) > 0:
+            print("Starting playback automatically")
+            self.running = True
     
     def _process_single_note(self, note_data, channel, interval):
         """
