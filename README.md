@@ -64,3 +64,10 @@ MusicAgent is built on a modular architecture that combines several key componen
 - **MIDI Implementation**: Uses the `mido` and `python-rtmidi` libraries for MIDI communication
 - **Agent Framework**: Built on the `smolagents` framework for AI agent capabilities
 - **Web Interface**: Utilizes Gradio for an interactive web-based UI
+
+
+## TODO
+
+* Improve system prompt
+* LLM selection and integration (OpenAI, Anthropic, etc.)
+* Integration in patchbox OS for Raspberry Pi.
