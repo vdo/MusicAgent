@@ -2,6 +2,7 @@ import mido
 import threading
 import time
 import queue
+import os
 from typing import Optional, List, Dict, Any
 
 class MidiEventLoop:
@@ -9,7 +10,7 @@ class MidiEventLoop:
     A MIDI event loop that can receive notes from an agent, sync to MIDI clock,
     and play notes to a default output port.
     """
-    def __init__(self, default_tempo=120, time_signature=(4, 4), auto_open_ports=True):
+    def __init__(self, default_tempo=120, time_signature=(4, 4), auto_open_ports=True, debug=None):
         """
         Initialize the MIDI event loop.
         
@@ -17,6 +18,8 @@ class MidiEventLoop:
             default_tempo: Default tempo in BPM if no MIDI clock is present
             time_signature: Time signature as a tuple (numerator, denominator)
             auto_open_ports: Whether to automatically open MIDI ports
+            debug: Whether to print debug information like bar numbers and tempo changes.
+                  If None, will use the DEBUG environment variable.
         """
         self.default_tempo = default_tempo
         self.current_tempo = default_tempo
@@ -30,6 +33,15 @@ class MidiEventLoop:
         self.last_tick_time = None
         self.current_bar = 0
         self.ticks_per_bar = self.ppq * self.time_signature[0]  # Ticks per bar
+        
+        # Check environment variable if debug is None
+        if debug is None:
+            debug_env = os.environ.get('DEBUG', '').lower()
+            self.debug = debug_env in ('true', '1', 'yes', 'y')
+        else:
+            self.debug = debug
+            
+        self.tempo_displayed = False
         
         # Initialize ports to None
         self.input_port = None
@@ -66,6 +78,35 @@ class MidiEventLoop:
             print(f"Error setting up MIDI ports: {e}")
             self.input_port = None
             self.output_port = None
+    
+    def set_output_device(self, device_name):
+        """
+        Set the MIDI output device to use.
+        
+        Args:
+            device_name: Name of the MIDI output device to use
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            available_outputs = mido.get_output_names()
+            
+            if device_name in available_outputs:
+                # Close existing output port if any
+                if self.output_port:
+                    self.output_port.close()
+                
+                # Open new output port
+                self.output_port = mido.open_output(device_name)
+                print(f"Connected to MIDI output: {device_name}")
+                return True
+            else:
+                print(f"MIDI output device '{device_name}' not found. Available devices: {available_outputs}")
+                return False
+        except Exception as e:
+            print(f"Error setting MIDI output device: {e}")
+            return False
     
     def _handle_midi_message(self, message):
         """
@@ -145,14 +186,19 @@ class MidiEventLoop:
                     
                     # Only print tempo changes that are significant
                     if abs(self.current_tempo - self.default_tempo) > 1.0:
-                        print(f"Current tempo: {self.current_tempo:.1f} BPM")
+                        if self.debug:
+                            print(f"Current tempo: {self.current_tempo:.1f} BPM")
+                        elif not self.tempo_displayed:
+                            print(f"Current tempo: {self.current_tempo:.1f} BPM")
+                            self.tempo_displayed = True
         
         self.last_tick_time = current_time
         
         # Check if we've completed a bar
         if self.tick_counter % self.ticks_per_bar == 0:
             self.current_bar += 1
-            print(f"Bar {self.current_bar}")
+            if self.debug:
+                print(f"Bar {self.current_bar}")
         
         # Every quarter note (24 ticks), check if we need to play notes
         if self.tick_counter % self.ppq == 0:
@@ -194,6 +240,7 @@ class MidiEventLoop:
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.thread.start()
         print("MIDI event loop started")
+        self.tempo_displayed = False  # Reset tempo display flag when starting
     
     def stop(self):
         """Stop the MIDI event loop."""
@@ -235,7 +282,8 @@ class MidiEventLoop:
                     # Check if we've completed a bar
                     if self.tick_counter % self.ticks_per_bar == 0:
                         self.current_bar += 1
-                        # print(f"Bar {self.current_bar} (internal clock)")
+                        if self.debug:
+                            print(f"Bar {self.current_bar} (internal clock)")
                 
                 # Sleep a small amount to avoid busy waiting
                 time.sleep(min(tick_duration / 10, 0.001))
@@ -252,7 +300,7 @@ class MidiEventLoop:
             except queue.Empty:
                 pass
     
-    def receive_notes_sequence(self, notes, num_bars=1, channel=0, quantize=True):
+    def receive_notes_sequence(self, notes, num_bars=1, channel=0, quantize=True, output_device=None):
         """
         Receive a sequence of notes from the agent and distribute them across the specified number of bars.
         
@@ -261,10 +309,19 @@ class MidiEventLoop:
             num_bars: Number of bars to distribute the notes across
             channel: MIDI channel to use for the notes
             quantize: Whether to quantize the notes to the MIDI clock
+            output_device: Name of the MIDI output device to use (from UI). If None, uses the current output_port.
         """
         if not notes:
             print("Warning: Received empty notes sequence")
             return
+        
+        # If output_device is specified, try to set it
+        if output_device:
+            self.set_output_device(output_device)
+            
+        # Check if we have a valid output port
+        if not self.output_port:
+            print("Warning: No MIDI output port available. Notes will be processed but not played.")
         
         # Calculate the total number of beats in the specified bars
         beats_per_bar = self.time_signature[0]

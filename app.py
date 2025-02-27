@@ -89,10 +89,14 @@ def select_midi_output(port_name):
     
     if port_name == "None":
         midi_loop.output_port = None
+        # Update the MIDI sequence tool with the selected output device
+        midi_sequence.set_output_device(port_name)
         return f"MIDI output disconnected"
     
     try:
         midi_loop.output_port = mido.open_output(port_name)
+        # Update the MIDI sequence tool with the selected output device
+        midi_sequence.set_output_device(port_name)
         return f"Connected to MIDI output: {port_name}"
     except Exception as e:
         return f"Error connecting to MIDI output {port_name}: {e}"
@@ -183,6 +187,9 @@ with gr.Blocks(title="MusicAgent") as ui:
         select_midi_input(midi_input_dropdown.value)
     if midi_output_dropdown.value != "None":
         select_midi_output(midi_output_dropdown.value)
+    else:
+        # Ensure the MidiSequenceTool knows there's no output device
+        midi_sequence.set_output_device("None")
     
     # Create the chat interface
     chatbot = gr.Chatbot(height=500, type="messages")

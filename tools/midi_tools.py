@@ -19,6 +19,7 @@ class MidiSequenceTool(Tool):
         super().__init__()
         self.midi_loop = midi_loop
         self.default_channel = 0  # Default MIDI channel (0-15)
+        self.output_device = None  # Selected output device from UI
     
     def set_midi_loop(self, midi_loop):
         """
@@ -28,6 +29,15 @@ class MidiSequenceTool(Tool):
             midi_loop: MidiEventLoop instance
         """
         self.midi_loop = midi_loop
+    
+    def set_output_device(self, device_name):
+        """
+        Set the MIDI output device to use.
+        
+        Args:
+            device_name: Name of the MIDI output device to use
+        """
+        self.output_device = None if device_name == "None" else device_name
     
     def forward(self, notes, num_bars=1, channel=None, quantize=True):
         """
@@ -106,8 +116,14 @@ class MidiSequenceTool(Tool):
                 else:
                     return f"Error: Invalid note data at position {i}: {note_data}"
             
-            # Send the sequence to the MIDI event loop
-            self.midi_loop.receive_notes_sequence(processed_notes, num_bars, channel, quantize)
+            # Send the sequence to the MIDI event loop with the selected output device
+            self.midi_loop.receive_notes_sequence(
+                processed_notes, 
+                num_bars, 
+                channel, 
+                quantize, 
+                output_device=self.output_device
+            )
             
             # Create a concise result message
             note_count = len(processed_notes)
