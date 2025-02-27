@@ -207,15 +207,11 @@ with gr.Blocks(title="MusicAgent") as ui:
         # Create empty assistant message for streaming
         chat_history.append({"role": "assistant", "content": ""})
         
-        # Get response from agent with streaming
-        response_text = ""
+        # Get response from agent (non-streaming approach since run_stream is not available)
+        response_text = agent.run(message)
         
-        # Start the agent in a separate thread to get tokens one by one
-        for token in agent.run_stream(message):
-            response_text += token
-            # Yield the updated chat history with the partial response
-            chat_history[-1]["content"] = response_text
-            yield "", chat_history
+        # Update the chat history with the complete response
+        chat_history[-1]["content"] = response_text
         
         return "", chat_history
     
