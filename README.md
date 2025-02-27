@@ -15,9 +15,9 @@ tags:
 - midi
 ---
 
-# MusicAgent
-** A MIDI control smolagent with some musical hallucinations.**
+# MusicAgent <img src="./assets/logo.svg" alt="MusicAgent Logo" width="32" height="32">
 
+**A MIDI control smolagent with some musical hallucinations.**
 
 ## Overview
 
