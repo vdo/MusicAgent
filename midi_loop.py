@@ -1,4 +1,4 @@
-import mido
+import rtmidi
 import threading
 import time
 import queue
@@ -47,8 +47,8 @@ class MidiEventLoop:
         self.tempo_displayed = False
         
         # Initialize ports to None
-        self.input_port = None
-        self.output_port = None
+        self.midiin = None
+        self.midiout = None
         
         # Try to open MIDI ports if auto_open_ports is True
         if auto_open_ports:
@@ -57,59 +57,73 @@ class MidiEventLoop:
     def _open_default_ports(self):
         """Open the default MIDI input and output ports."""
         try:
-            available_inputs = mido.get_input_names()
-            available_outputs = mido.get_output_names()
+            available_inputs = rtmidi.MidiIn().get_ports()
+            available_outputs = rtmidi.MidiOut().get_ports()
             
             print(f"Available MIDI inputs: {available_inputs}")
             print(f"Available MIDI outputs: {available_outputs}")
             
             if available_inputs:
-                self.input_port = mido.open_input(available_inputs[0], callback=self._handle_midi_message)
+                self.midiin = rtmidi.MidiIn()
+                self.midiin.open_port(0)
+                # Set callback for incoming MIDI messages
+                self.midiin.set_callback(self._midi_callback)
+                # Don't ignore MIDI clock messages
+                self.midiin.ignore_types(timing=False)
                 print(f"Connected to MIDI input: {available_inputs[0]}")
             else:
-                self.input_port = None
+                self.midiin = None
                 print("No MIDI input ports available")
             
             if available_outputs:
-                self.output_port = mido.open_output(available_outputs[0])
+                self.midiout = rtmidi.MidiOut()
+                self.midiout.open_port(0)
                 print(f"Connected to MIDI output: {available_outputs[0]}")
             else:
-                self.output_port = None
+                self.midiout = None
                 print("No MIDI output ports available")
                 
         except Exception as e:
             print(f"Error setting up MIDI ports: {e}")
-            self.input_port = None
-            self.output_port = None
+            self.midiin = None
+            self.midiout = None
     
-    def set_output_device(self, device_name):
+    def _midi_callback(self, message, data=None):
         """
-        Set the MIDI output device to use.
+        Callback function for incoming MIDI messages.
         
         Args:
-            device_name: Name of the MIDI output device to use
-        
-        Returns:
-            bool: True if successful, False otherwise
+            message: MIDI message as a tuple (message, timestamp)
+            data: Additional data (not used)
         """
-        try:
-            available_outputs = mido.get_output_names()
+        status, *data = message
+        
+        # Handle MIDI transport messages
+        if status == 0xFA:  # MIDI Start
+            self.start()
+        elif status == 0xFC:  # MIDI Stop
+            self.stop()
+        elif status == 0xFB:  # MIDI Continue
+            self.running = True
+            if self.debug:
+                print("MIDI Continue received: Resuming playback")
+        elif status == 0xF8:  # MIDI Clock
+            self._process_clock_tick()
+        
+        # Handle note messages for potential recording functionality
+        elif (status & 0xF0) in (0x80, 0x90) and self.running and len(message) >= 3:
+            # Extract channel from status byte
+            channel = status & 0x0F
             
-            if device_name in available_outputs:
-                # Close existing output port if any
-                if self.output_port:
-                    self.output_port.close()
-                
-                # Open new output port
-                self.output_port = mido.open_output(device_name)
-                print(f"Connected to MIDI output: {device_name}")
-                return True
-            else:
-                print(f"MIDI output device '{device_name}' not found. Available devices: {available_outputs}")
-                return False
-        except Exception as e:
-            print(f"Error setting MIDI output device: {e}")
-            return False
+            # Create a MidiNote object
+            if (status & 0xF0) == 0x90:  # Note On
+                midi_note = MidiNote(0x90, message[1], message[2], channel, self.tick_counter / self.ppq)
+            else:  # Note Off
+                midi_note = MidiNote(0x80, message[1], message[2], channel, self.tick_counter / self.ppq)
+            
+            # Just pass through to output if we're not recording
+            if self.midiout:
+                self.midiout.send_message(midi_note.to_midi_message())
     
     def _handle_midi_message(self, message):
         """
@@ -119,47 +133,59 @@ class MidiEventLoop:
             message: MIDI message to handle
         """
         # Handle MIDI system real-time messages (status bytes 0xF8-0xFF)
-        if message.type == 'clock':  # 0xF8 (248) - Timing Clock
-            self.midi_clock_present = True
-            self._process_clock_tick()
-        
-        elif message.type == 'start':  # 0xFA (250) - Start
-            print("MIDI Start received")
-            self.tick_counter = 0
-            self.current_bar = 0
-            self.last_tick_time = time.time()
-            self.midi_clock_present = True
-            self.running = True
+        if len(message) > 0:
+            status = message[0]
             
-        elif message.type == 'stop':  # 0xFC (252) - Stop
-            print("MIDI Stop received")
-            self.running = False
+            if status == 0xF8:  # 0xF8 (248) - Timing Clock
+                self.midi_clock_present = True
+                self._process_clock_tick()
             
-        elif message.type == 'continue':  # 0xFB (251) - Continue
-            print("MIDI Continue received")
-            self.running = True
-            
-        elif message.type == 'song_position':  # 0xF2 (242) - Song Position Pointer
-            # Song position is in MIDI beats (16th notes), convert to our ticks
-            # Each MIDI beat is 6 MIDI clock ticks (24 ticks per quarter note / 4)
-            position_in_ticks = message.pos * 6
-            self.tick_counter = position_in_ticks
-            self.current_bar = position_in_ticks // self.ticks_per_bar
-            print(f"MIDI Song Position: {message.pos} (tick {position_in_ticks}, bar {self.current_bar})")
-            
-        elif message.type == 'reset':  # 0xFF (255) - Reset
-            print("MIDI Reset received")
-            self.tick_counter = 0
-            self.current_bar = 0
-            self.midi_clock_present = False
-            self.running = False
-            self.clear_loop()
-            
-        # Handle note messages for potential recording functionality
-        elif message.type in ('note_on', 'note_off') and self.running:
-            # Just pass through to output if we're not recording
-            if self.output_port:
-                self.output_port.send(message)
+            elif status == 0xFA:  # 0xFA (250) - Start
+                print("MIDI Start received")
+                self.tick_counter = 0
+                self.current_bar = 0
+                self.last_tick_time = time.time()
+                self.midi_clock_present = True
+                self.running = True
+                
+            elif status == 0xFC:  # 0xFC (252) - Stop
+                print("MIDI Stop received")
+                self.running = False
+                
+            elif status == 0xFB:  # 0xFB (251) - Continue
+                print("MIDI Continue received")
+                self.running = True
+                
+            elif status == 0xF2 and len(message) >= 3:  # 0xF2 (242) - Song Position Pointer
+                # Song position is in MIDI beats (16th notes), convert to our ticks
+                # Each MIDI beat is 6 MIDI clock ticks (24 ticks per quarter note / 4)
+                position_in_ticks = (message[1] | (message[2] << 7)) * 6
+                self.tick_counter = position_in_ticks
+                self.current_bar = position_in_ticks // self.ticks_per_bar
+                print(f"MIDI Song Position: {message[1] | (message[2] << 7)} (tick {position_in_ticks}, bar {self.current_bar})")
+                
+            elif status == 0xFF:  # 0xFF (255) - Reset
+                print("MIDI Reset received")
+                self.tick_counter = 0
+                self.current_bar = 0
+                self.midi_clock_present = False
+                self.running = False
+                self.clear_loop()
+                
+            # Handle note messages for potential recording functionality
+            elif (status & 0xF0) in (0x80, 0x90) and self.running and len(message) >= 3:
+                # Extract channel from status byte
+                channel = status & 0x0F
+                
+                # Create a MidiNote object
+                if (status & 0xF0) == 0x90:  # Note On
+                    midi_note = MidiNote(0x90, message[1], message[2], channel, self.tick_counter / self.ppq)
+                else:  # Note Off
+                    midi_note = MidiNote(0x80, message[1], message[2], channel, self.tick_counter / self.ppq)
+                
+                # Just pass through to output if we're not recording
+                if self.midiout:
+                    self.midiout.send_message(midi_note.to_midi_message())
     
     def _process_clock_tick(self):
         """Process a single MIDI clock tick."""
@@ -209,7 +235,7 @@ class MidiEventLoop:
     
     def _play_scheduled_notes(self):
         """Play any notes that are scheduled to be played."""
-        if not self.running or not self.output_port:
+        if not self.running or not self.midiout:
             return
     
         # Get the current beat position
@@ -225,7 +251,7 @@ class MidiEventLoop:
             # If we're close to the note_off time, send it
             if abs(current_beat - note_beat_position) < 0.1 or (current_beat < 0.1 and note_beat_position > (total_beats_in_loop - 0.1)):
                 # Send the note_off message
-                self.output_port.send(note_off)
+                self.midiout.send_message(note_off.to_midi_message())
                 
                 # Remove this note from active notes
                 note_key = (note_off.note, note_off.channel)
@@ -242,16 +268,20 @@ class MidiEventLoop:
         self.pending_note_offs = pending_note_offs_to_keep
         
         # Sort notes by their time attribute
-        sorted_notes = sorted(self.loop_notes, key=lambda note: note.time if hasattr(note, 'time') else 0)
+        sorted_notes = sorted(self.loop_notes, key=lambda note: note.time)
+        
+        # Reset played_note_events at the start of each bar
+        if self.tick_counter % self.ticks_per_bar == 0:
+            self.played_note_events.clear()
         
         # Play notes that should be played at this beat position
         for note in sorted_notes:
             # Skip notes that aren't note_on messages
-            if note.type != 'note_on':
+            if note.message_type & 0xF0 != 0x90:  # Check if it's a note_on message (0x90-0x9F)
                 continue
                 
             # Create a unique identifier for each note event
-            note_id = (note.type, note.note, note.time, note.channel)
+            note_id = (note.message_type, note.note, note.time, note.channel)
             
             # Skip notes that have already been played in this loop
             if note_id in self.played_note_events:
@@ -263,104 +293,87 @@ class MidiEventLoop:
             # If we're close to the note's beat position, play it
             # Use a small tolerance to account for timing jitter
             if abs(current_beat - note_beat_position) < 0.1 or (current_beat < 0.1 and note_beat_position > (total_beats_in_loop - 0.1)):
-                # Check if this note is already playing (to prevent overlapping identical notes)
-                note_key = (note.note, note.channel)
-                
-                # If velocity is 0, this is effectively a note_off
-                if note.velocity == 0:
-                    if note_key in self.active_notes:
-                        # Turn off the note
-                        self.output_port.send(note)
-                        del self.active_notes[note_key]
-                        if self.debug:
-                            print(f"Note OFF (velocity=0): {note.note} on channel {note.channel+1} at beat {current_beat:.2f}")
-                else:
-                    # For regular note_on messages
-                    # Check if we need to turn off an existing note first
-                    if note_key in self.active_notes:
-                        # Create a note_off message to stop the currently playing note
-                        note_off = mido.Message('note_off', note=note.note, velocity=0, channel=note.channel, time=current_beat)
-                        self.output_port.send(note_off)
-                        if self.debug:
-                            print(f"Pre-emptive Note OFF: {note.note} on channel {note.channel+1} at beat {current_beat:.2f}")
-                    
-                    # Send the note_on message
-                    self.output_port.send(note)
-                    
-                    # Mark this note as active
-                    self.active_notes[note_key] = note
-                    
+                # Turn off all currently active notes to ensure only one note or chord is played at a time
+                for note_key, active_note in list(self.active_notes.items()):
+                    note_off = MidiNote(0x80, note_key[0], 0, note_key[1], current_beat)
+                    self.midiout.send_message(note_off.to_midi_message())
+                    del self.active_notes[note_key]
                     if self.debug:
-                        print(f"Note ON: {note.note} on channel {note.channel+1} at beat {current_beat:.2f}")
+                        print(f"Pre-emptive Note OFF: {note_key[0]} on channel {note_key[1]+1} at beat {current_beat:.2f}")
                 
-                # Mark the note as played in this loop
-                self.played_note_events.add(note_id)
-    
+                # Send the note_on message
+                self.midiout.send_message(note.to_midi_message())
+                
+                # Mark this note as active
+                note_key = (note.note, note.channel)
+                self.active_notes[note_key] = note
+                
+                if self.debug:
+                    print(f"Note ON: {note.note} on channel {note.channel+1} at beat {current_beat:.2f}")
+            
+            # Mark the note as played in this loop
+            self.played_note_events.add(note_id)
+
     def add_note_to_loop(self, note):
         """
         Add a note to the loop.
         
         Args:
-            note: MIDI note message to add to the loop
+            note: MIDI note message to add to the loop (MidiNote object or list)
         """
-        if isinstance(note, mido.Message):
-            # Make sure the note has a time attribute
-            if not hasattr(note, 'time'):
-                note.time = 0
+        if isinstance(note, MidiNote):
+            # Add the note to the loop
+            self.loop_notes.append(note)
+            
+            # If this is a note_on with velocity > 0, check if we need to create a note_off
+            if note.message_type == 0x90 and note.velocity > 0:
+                # Look for a corresponding note_off
+                for i, other_note in enumerate(self.loop_notes):
+                    if ((other_note.message_type == 0x80) or 
+                        (other_note.message_type == 0x90 and other_note.velocity == 0)) and \
+                       other_note.note == note.note and \
+                       other_note.channel == note.channel and \
+                       other_note.time > note.time:
+                        # Found a matching note_off, no need to create a new one
+                        break
+                else:
+                    # No matching note_off found, create one with default duration
+                    # This happens rarely as note_offs are usually created in _process_single_note
+                    if self.debug:
+                        print(f"Warning: Creating default note_off for note {note.note} as none was found")
+                    
+                    # Create a note_off message with a short default duration (0.25 beats)
+                    note_off = MidiNote(0x80, note.note, 0, note.channel, note.time + 0.25)
+                    self.loop_notes.append(note_off)
                 
-            # Handle note_on and note_off messages
-            if note.type == 'note_on' and hasattr(note, 'note'):
-                # Add the note_on message to the loop
-                self.loop_notes.append(note)
-                
-                # If this is a note_off (velocity=0), we don't need to create a separate note_off
-                if note.velocity > 0:
-                    # Look for a corresponding note_off
-                    for i, other_note in enumerate(self.loop_notes):
-                        if (other_note.type == 'note_off' or 
-                            (other_note.type == 'note_on' and other_note.velocity == 0)) and \
-                           other_note.note == note.note and \
-                           other_note.channel == note.channel and \
-                           other_note.time > note.time:
-                            # Found a matching note_off, no need to create a new one
-                            break
-                    else:
-                        # No matching note_off found, create one with default duration
-                        # This happens rarely as note_offs are usually created in _process_single_note
-                        if self.debug:
-                            print(f"Warning: Creating default note_off for note {note.note} as none was found")
-                        
-                        # Create a note_off message with a short default duration (0.25 beats)
-                        note_off = mido.Message('note_off', 
-                                               note=note.note, 
-                                               velocity=0, 
-                                               channel=note.channel, 
-                                               time=note.time + 0.25)
-                        self.loop_notes.append(note_off)
-                
-            elif note.type == 'note_off' and hasattr(note, 'note'):
-                # Add the note_off message to the loop
-                self.loop_notes.append(note)
-            else:
-                print(f"Warning: Ignoring MIDI message without proper note properties: {note}")
+        elif isinstance(note, list) and len(note) >= 3:
+            # Convert the list to a MidiNote object
+            message_type = note[0] & 0xF0  # Extract message type (0x80, 0x90, etc.)
+            channel = note[0] & 0x0F       # Extract channel (0-15)
+            note_num = note[1]             # Note number
+            velocity = note[2]             # Velocity
+            
+            # Create a MidiNote object with default time of 0
+            midi_note = MidiNote(message_type, note_num, velocity, channel, 0)
+            
+            # Add to loop
+            self.add_note_to_loop(midi_note)
         else:
-            print(f"Warning: Tried to add invalid MIDI message to loop: {note}")
+            print(f"Warning: Invalid note data: {note}")
     
     def clear_loop(self):
         """Clear all notes from the loop."""
         # Turn off any active notes
-        if self.output_port:
+        if self.midiout:
             for note_key, note in self.active_notes.items():
-                note_off = mido.Message('note_off', note=note_key[0], velocity=0, channel=note_key[1])
-                self.output_port.send(note_off)
+                note_off = MidiNote(0x80, note_key[0], 0, note_key[1], 0)
+                self.midiout.send_message(note_off.to_midi_message())
         
         # Clear the tracking collections
         self.played_note_events.clear()
         self.active_notes.clear()
         self.pending_note_offs.clear()
-        
-        # Clear the loop
-        self.loop_notes = []
+        self.loop_notes.clear()
     
     def _process_single_note(self, note_data, channel, interval, position_in_beats=0, default_note_length=0.8):
         """
@@ -379,12 +392,30 @@ class MidiEventLoop:
         
         # Ensure note_data is a dictionary
         if isinstance(note_data, dict):
+            note_num = note_data.get('note', 60)
+            note_channel = note_data.get('channel', channel)
+            
+            # Check if this note is already playing and needs to be turned off
+            for existing_note in self.loop_notes:
+                if (existing_note.message_type == 0x90 and 
+                    existing_note.note == note_num and 
+                    existing_note.channel == note_channel and
+                    existing_note.time < position_in_beats):
+                    
+                    # Find any existing note_off for this note
+                    for note_off in self.loop_notes:
+                        if (note_off.message_type == 0x80 and 
+                            note_off.note == note_num and 
+                            note_off.channel == note_channel and
+                            note_off.time > existing_note.time):
+                            
+                            # Adjust the note_off time to be just before current position
+                            if note_off.time > position_in_beats:
+                                note_off.time = max(0, position_in_beats - 0.01)
+                            break
+            
             # Create note_on message
-            note_on = mido.Message('note_on',
-                                  note=note_data.get('note', 60),
-                                  velocity=note_data.get('velocity', 64),
-                                  channel=note_data.get('channel', channel),
-                                  time=position_in_beats)
+            note_on = MidiNote(0x90, note_num, note_data.get('velocity', 64), note_channel, position_in_beats)
             
             # Add note_on to the loop
             self.add_note_to_loop(note_on)
@@ -399,11 +430,7 @@ class MidiEventLoop:
                 duration = min(interval * default_note_length, interval * 0.95)
             
             # Create note_off message
-            note_off = mido.Message('note_off',
-                                   note=note_data.get('note', 60),
-                                   velocity=0,
-                                   channel=note_data.get('channel', channel),
-                                   time=position_in_beats + duration)
+            note_off = MidiNote(0x80, note_num, 0, note_channel, position_in_beats + duration)
             
             # Add note_off to the loop
             self.add_note_to_loop(note_off)
@@ -431,7 +458,7 @@ class MidiEventLoop:
             self.set_output_device(output_device)
             
         # Check if we have a valid output port
-        if not self.output_port:
+        if not self.midiout:
             print("Warning: No MIDI output port available. Notes will be processed but not played.")
         
         # Calculate the total number of beats in the specified bars
@@ -462,11 +489,18 @@ class MidiEventLoop:
             # Calculate the position of this event in beats
             position_in_beats = i * interval
             
+            # For each new note/chord position, ensure any previous notes at earlier positions
+            # have their note_off messages scheduled before the current position
+            for note in self.loop_notes:
+                if note.message_type == 0x80 and note.time > position_in_beats:
+                    # Adjust note_off time to be just before the current position
+                    note.time = max(0, position_in_beats - 0.01)
+            
             # Handle different types of note data
             if isinstance(note_data, list):
                 # This is a chord (list of notes to be played simultaneously)
                 for chord_note in note_data:
-                    # All chord notes start at the same position and can overlap
+                    # All chord notes start at the same position
                     self._process_single_note(chord_note, channel, interval, position_in_beats, default_note_length)
             elif isinstance(note_data, (int, float)):
                 # This is a single note number
@@ -487,6 +521,36 @@ class MidiEventLoop:
         if len(self.loop_notes) > 0 and not self.running:
             print("Notes added to loop. Waiting for MIDI start command to begin playback.")
     
+    def set_output_device(self, device_name):
+        """
+        Set the MIDI output device to use.
+        
+        Args:
+            device_name: Name of the MIDI output device to use
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            available_outputs = rtmidi.MidiOut().get_ports()
+            
+            if device_name in available_outputs:
+                # Close existing output port if any
+                if self.midiout:
+                    self.midiout.close_port()
+                
+                # Open new output port
+                self.midiout = rtmidi.MidiOut()
+                self.midiout.open_port(available_outputs.index(device_name))
+                print(f"Connected to MIDI output: {device_name}")
+                return True
+            else:
+                print(f"MIDI output device '{device_name}' not found. Available devices: {available_outputs}")
+                return False
+        except Exception as e:
+            print(f"Error setting MIDI output device: {e}")
+            return False
+    
     def start(self):
         """Start the MIDI event loop."""
         if self.running:
@@ -497,21 +561,32 @@ class MidiEventLoop:
         self.thread.start()
         print("MIDI event loop started")
         self.tempo_displayed = False  # Reset tempo display flag when starting
-    
+
     def stop(self):
         """Stop the MIDI event loop."""
+        # Set running flag to False
         self.running = False
-        if hasattr(self, 'thread') and self.thread.is_alive():
+        
+        # Turn off any active notes
+        if self.midiout:
+            for note_key, note in self.active_notes.items():
+                note_off = MidiNote(0x80, note_key[0], 0, note_key[1], 0)
+                self.midiout.send_message(note_off.to_midi_message())
+        
+        # Wait for thread to finish if it's running
+        if self.thread and self.thread.is_alive():
             self.thread.join(timeout=1.0)
         
         # Close MIDI ports
-        if self.input_port:
-            self.input_port.close()
-        if self.output_port:
-            self.output_port.close()
+        if self.midiin:
+            self.midiin.close_port()
+            del self.midiin
+        if self.midiout:
+            self.midiout.close_port()
+            del self.midiout
         
         print("MIDI event loop stopped")
-    
+
     def _run_loop(self):
         """Main loop function that runs in a separate thread."""
         self.last_tick_time = time.time()
@@ -555,3 +630,44 @@ class MidiEventLoop:
                     self.note_queue.task_done()
             except queue.Empty:
                 pass
+
+class MidiNote:
+    """
+    A class to represent a MIDI note with additional timing information.
+    This is used to replace the mido Message objects with a compatible interface for rtmidi.
+    """
+    def __init__(self, message_type, note, velocity, channel=0, time=0):
+        """
+        Initialize a MIDI note.
+        
+        Args:
+            message_type: MIDI message type (0x90 for note_on, 0x80 for note_off)
+            note: MIDI note number
+            velocity: MIDI velocity
+            channel: MIDI channel
+            time: Time in beats when this note should be played
+        """
+        self.message_type = message_type
+        self.note = note
+        self.velocity = velocity
+        self.channel = channel
+        self.time = time
+        
+    def to_midi_message(self):
+        """Convert to a MIDI message that can be sent via rtmidi."""
+        return [self.message_type | (self.channel & 0x0F), self.note, self.velocity]
+        
+    def __getitem__(self, index):
+        """Allow indexing like a list for compatibility with existing code."""
+        if index == 0:
+            return self.message_type
+        elif index == 1:
+            return self.note
+        elif index == 2:
+            return self.velocity
+        else:
+            raise IndexError("MidiNote index out of range")
+            
+    def __len__(self):
+        """Return the length of the MIDI message."""
+        return 3
