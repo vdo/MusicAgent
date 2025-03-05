@@ -30,6 +30,14 @@ available_outputs_with_none = ["None"] + available_outputs
 # MIDI channels (display as 1-16, while internally using 0-15)
 midi_channels = list(range(1, 17))
 
+# Model options
+model_options = {
+    "Qwen 2.5 Coder 32B": "qwen_coder",
+    "DeepSeek Coder V2 Instruct": "deepseek_coder"
+}
+
+# Initialize with Qwen model by default
+current_model_type = "qwen_coder"
 model = HfApiModel(
     model_id='Qwen/Qwen2.5-Coder-32B-Instruct',
     provider=None,
@@ -50,23 +58,55 @@ midi_sequence = MidiSequenceTool(midi_loop=midi_loop)
 with open(os.path.join(CURRENT_DIR, "prompts.yaml"), 'r') as stream:
     prompt_templates = yaml.safe_load(stream)
 
-agent = CodeAgent(
-    model=model,
-    tools=[
-        web_search, 
-        visit_webpage, 
-        notes_from_chord, 
-        all_modes, 
-        final_answer, 
-        midi_sequence
-    ],
-    managed_agents=[],
-    max_steps=10,
-    verbosity_level=2,
-    grammar=None,
-    planning_interval=None,
-    additional_authorized_imports=["queue", "collections", "time", "statistics", "stat", "math", "unicodedata", "random", "itertools", "re", "datetime", "mingus"]
-)
+# Function to initialize the agent
+def initialize_agent():
+    global agent
+    agent = CodeAgent(
+        model=model,
+        tools=[
+            web_search, 
+            visit_webpage, 
+            notes_from_chord, 
+            all_modes, 
+            final_answer, 
+            midi_sequence
+        ],
+        managed_agents=[],
+        max_steps=10,
+        verbosity_level=2,
+        grammar=None,
+        planning_interval=None,
+        additional_authorized_imports=["queue", "collections", "time", "statistics", "stat", "math", "unicodedata", "random", "itertools", "re", "datetime", "mingus"]
+    )
+
+# Initialize the agent
+initialize_agent()
+
+# Function to switch models
+def switch_model(model_choice):
+    global model, agent, current_model_type
+    
+    if model_options[model_choice] == "qwen_coder" and current_model_type != "qwen_coder":
+        model = HfApiModel(
+            model_id='Qwen/Qwen2.5-Coder-32B-Instruct',
+            provider=None,
+        )
+        current_model_type = "qwen_coder"
+        # Recreate agent with new model
+        initialize_agent()
+        return f"Switched to {model_choice}"
+    
+    elif model_options[model_choice] == "deepseek_coder" and current_model_type != "deepseek_coder":
+        model = HfApiModel(
+            model_id='deepseek-ai/DeepSeek-Coder-V2-Instruct',
+            provider=None,
+        )
+        current_model_type = "deepseek_coder"
+        # Recreate agent with new model
+        initialize_agent()
+        return f"Switched to {model_choice}"
+    
+    return f"Already using {model_choice}"
 
 # Function to handle MIDI input port selection
 def select_midi_input(port_name):
@@ -131,6 +171,15 @@ with gr.Blocks(title="MusicAgent") as ui:
     gr.Markdown("# MusicAgent")
     gr.Markdown("A MIDI control smolagent with some musical hallucinations.")
     
+    with gr.Accordion("Model Settings", open=True):
+        with gr.Row():
+            model_dropdown = gr.Dropdown(
+                choices=list(model_options.keys()),
+                value=list(model_options.keys())[0],
+                label="Select Model"
+            )
+            model_status = gr.Textbox(label="Model Status", interactive=False)
+    
     with gr.Accordion("MIDI Settings", open=False):
         with gr.Row():
             with gr.Column():
@@ -157,6 +206,13 @@ with gr.Blocks(title="MusicAgent") as ui:
                 )
                 midi_channel_status = gr.Textbox(label="Channel Status", interactive=False)
                 refresh_button = gr.Button("Refresh MIDI Devices")
+    
+    # Connect model selection event handler
+    model_dropdown.change(
+        switch_model,
+        inputs=[model_dropdown],
+        outputs=[model_status]
+    )
     
     # Connect event handlers
     midi_input_dropdown.change(

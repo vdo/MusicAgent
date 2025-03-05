@@ -3,6 +3,7 @@ duckduckgo_search
 markdownify
 smolagents
 smolagents[gradio]
+smolagents[litellm]
 mingus
 mido
 python-rtmidi
