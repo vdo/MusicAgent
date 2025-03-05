@@ -25,6 +25,7 @@ class MidiEventLoop:
         self.current_tempo = default_tempo
         self.time_signature = time_signature
         self.running = False
+        self.transport_playing = False  # Flag to track if transport is playing
         self.note_queue = queue.Queue()
         self.loop_notes = []
         self.active_notes = {}  # Dict to track currently active notes by (note, channel) tuple
@@ -36,6 +37,9 @@ class MidiEventLoop:
         self.last_tick_time = None
         self.current_bar = 0
         self.ticks_per_bar = self.ppq * self.time_signature[0]  # Ticks per bar
+        
+        # For tempo detection
+        self.clock_intervals = []  # List to store intervals between clock messages
         
         # Check environment variable if debug is None
         if debug is None:
@@ -96,92 +100,74 @@ class MidiEventLoop:
             message: MIDI message as a tuple (message, timestamp)
             data: Additional data (not used)
         """
-        status, *data = message
+        if not message:
+            return
+            
+        midi_message, timestamp = message
         
+        if not midi_message:
+            return
+            
         # Handle MIDI transport messages
-        if status == 0xFA:  # MIDI Start
-            self.start()
-        elif status == 0xFC:  # MIDI Stop
-            self.stop()
-        elif status == 0xFB:  # MIDI Continue
-            self.running = True
-            if self.debug:
-                print("MIDI Continue received: Resuming playback")
-        elif status == 0xF8:  # MIDI Clock
-            self._process_clock_tick()
-        
-        # Handle note messages for potential recording functionality
-        elif (status & 0xF0) in (0x80, 0x90) and self.running and len(message) >= 3:
-            # Extract channel from status byte
-            channel = status & 0x0F
+        if len(midi_message) > 0:
+            status = midi_message[0]
             
-            # Create a MidiNote object
-            if (status & 0xF0) == 0x90:  # Note On
-                midi_note = MidiNote(0x90, message[1], message[2], channel, self.tick_counter / self.ppq)
-            else:  # Note Off
-                midi_note = MidiNote(0x80, message[1], message[2], channel, self.tick_counter / self.ppq)
-            
-            # Just pass through to output if we're not recording
-            if self.midiout:
-                self.midiout.send_message(midi_note.to_midi_message())
-    
-    def _handle_midi_message(self, message):
-        """
-        Handle incoming MIDI messages.
-        
-        Args:
-            message: MIDI message to handle
-        """
-        # Handle MIDI system real-time messages (status bytes 0xF8-0xFF)
-        if len(message) > 0:
-            status = message[0]
-            
-            if status == 0xF8:  # 0xF8 (248) - Timing Clock
-                self.midi_clock_present = True
-                self._process_clock_tick()
-            
-            elif status == 0xFA:  # 0xFA (250) - Start
-                print("MIDI Start received")
+            if status == 0xFA:  # MIDI Start
+                if self.debug:
+                    print("MIDI Start received")
                 self.tick_counter = 0
                 self.current_bar = 0
                 self.last_tick_time = time.time()
                 self.midi_clock_present = True
                 self.running = True
+                self.transport_playing = True
                 
-            elif status == 0xFC:  # 0xFC (252) - Stop
-                print("MIDI Stop received")
+            elif status == 0xFC:  # MIDI Stop
+                if self.debug:
+                    print("MIDI Stop received")
+                self.transport_playing = False
                 self.running = False
+                self._stop_all_notes()  # Stop any currently playing notes
                 
-            elif status == 0xFB:  # 0xFB (251) - Continue
-                print("MIDI Continue received")
+            elif status == 0xFB:  # MIDI Continue
+                if self.debug:
+                    print("MIDI Continue received")
                 self.running = True
+                self.transport_playing = True
                 
-            elif status == 0xF2 and len(message) >= 3:  # 0xF2 (242) - Song Position Pointer
+            elif status == 0xF8:  # MIDI Clock
+                self._process_clock_tick()
+                
+            elif status == 0xF2 and len(midi_message) >= 3:  # Song Position Pointer
                 # Song position is in MIDI beats (16th notes), convert to our ticks
                 # Each MIDI beat is 6 MIDI clock ticks (24 ticks per quarter note / 4)
-                position_in_ticks = (message[1] | (message[2] << 7)) * 6
+                position_in_ticks = (midi_message[1] | (midi_message[2] << 7)) * 6
                 self.tick_counter = position_in_ticks
                 self.current_bar = position_in_ticks // self.ticks_per_bar
-                print(f"MIDI Song Position: {message[1] | (message[2] << 7)} (tick {position_in_ticks}, bar {self.current_bar})")
+                if self.debug:
+                    print(f"MIDI Song Position: {midi_message[1] | (midi_message[2] << 7)} (tick {position_in_ticks}, bar {self.current_bar})")
                 
-            elif status == 0xFF:  # 0xFF (255) - Reset
-                print("MIDI Reset received")
+            elif status == 0xFF:  # MIDI Reset
+                if self.debug:
+                    print("MIDI Reset received")
                 self.tick_counter = 0
                 self.current_bar = 0
                 self.midi_clock_present = False
                 self.running = False
+                self.transport_playing = False
                 self.clear_loop()
+                self._stop_all_notes()
                 
             # Handle note messages for potential recording functionality
-            elif (status & 0xF0) in (0x80, 0x90) and self.running and len(message) >= 3:
+            elif (status & 0xF0) in (0x80, 0x90) and len(midi_message) >= 3:
                 # Extract channel from status byte
                 channel = status & 0x0F
                 
                 # Create a MidiNote object
                 if (status & 0xF0) == 0x90:  # Note On
-                    midi_note = MidiNote(0x90, message[1], message[2], channel, self.tick_counter / self.ppq)
+                    midi_note = MidiNote(0x90, midi_message[1], midi_message[2], channel, self.tick_counter / self.ppq)
                 else:  # Note Off
-                    midi_note = MidiNote(0x80, message[1], message[2], channel, self.tick_counter / self.ppq)
+                    midi_note = MidiNote(0x80, midi_message[1], midi_message[2], channel, self.tick_counter / self.ppq)
                 
                 # Just pass through to output if we're not recording
                 if self.midiout:
@@ -191,129 +177,138 @@ class MidiEventLoop:
         """Process a single MIDI clock tick."""
         current_time = time.time()
         
+        # Update tempo detection
+        if self.last_tick_time is not None:
+            interval = current_time - self.last_tick_time
+            self.clock_intervals.append(interval)
+            # Keep only the last 50 intervals for averaging
+            if len(self.clock_intervals) > 50:
+                self.clock_intervals.pop(0)
+            if self.clock_intervals:
+                avg_interval = sum(self.clock_intervals) / len(self.clock_intervals)
+                # Calculate BPM: 24 clock ticks per quarter note
+                new_tempo = 60.0 / (avg_interval * 24)
+                
+                # Only update if the tempo has changed significantly
+                if abs(new_tempo - self.current_tempo) > 0.5:
+                    self.current_tempo = new_tempo
+                    if self.debug and not self.tempo_displayed:
+                        print(f"MIDI Clock detected: Tempo set to {self.current_tempo:.1f} BPM")
+                        self.tempo_displayed = True
+        
+        self.last_tick_time = current_time
+        
         # Only process clock ticks if we're running
         if not self.running:
             return
             
         self.tick_counter += 1
         
-        # Calculate tempo from MIDI clock if we have received enough ticks
-        if self.last_tick_time is not None:
-            tick_interval = current_time - self.last_tick_time
-            
-            # Only update tempo every quarter note (24 ticks) to smooth out jitter
-            if self.tick_counter % self.ppq == 0:
-                # Calculate time for a quarter note (24 MIDI clock ticks)
-                quarter_note_time = tick_interval * self.ppq
-                if quarter_note_time > 0:
-                    # Convert to BPM (60 seconds / quarter_note_time)
-                    new_tempo = 60.0 / quarter_note_time
-                    
-                    # Apply a simple low-pass filter to smooth tempo changes
-                    # (80% previous tempo, 20% new tempo)
-                    self.current_tempo = 0.8 * self.current_tempo + 0.2 * new_tempo
-                    
-                    # Only print tempo changes that are significant
-                    if abs(self.current_tempo - self.default_tempo) > 1.0:
-                        if self.debug:
-                            print(f"Current tempo: {self.current_tempo:.1f} BPM")
-                        elif not self.tempo_displayed:
-                            print(f"Current tempo: {self.current_tempo:.1f} BPM")
-                            self.tempo_displayed = True
-        
-        self.last_tick_time = current_time
-        
-        # Check if we've completed a bar
+        # Check if we've reached a new bar
         if self.tick_counter % self.ticks_per_bar == 0:
             self.current_bar += 1
             if self.debug:
-                print(f"Bar {self.current_bar}")
+                print(f"Bar {self.current_bar} (Tempo: {self.current_tempo:.1f} BPM)")
+            self.tempo_displayed = False
         
-        # Every quarter note (24 ticks), check if we need to play notes
-        if self.tick_counter % self.ppq == 0:
-            self._play_scheduled_notes()
+        # Process any notes that need to be played at this tick
+        self._process_notes_at_current_tick()
     
-    def _play_scheduled_notes(self):
-        """Play any notes that are scheduled to be played."""
-        if not self.running or not self.midiout:
+    def _process_notes_at_current_tick(self):
+        """Process any notes that need to be played at the current tick."""
+        # Only process notes if transport is playing
+        if not self.transport_playing:
             return
-    
-        # Get the current beat position
-        current_beat = (self.tick_counter / self.ppq) % (self.time_signature[0] * 4)  # 4 beats per bar
-        total_beats_in_loop = self.time_signature[0] * 4  # Total beats in a loop (4 beats per bar)
-        
-        # First process any pending note_offs
-        pending_note_offs_to_keep = []
-        for note_off in self.pending_note_offs:
-            # Check if it's time to send this note_off
-            note_beat_position = note_off.time % total_beats_in_loop
             
-            # If we're close to the note_off time, send it
-            if abs(current_beat - note_beat_position) < 0.1 or (current_beat < 0.1 and note_beat_position > (total_beats_in_loop - 0.1)):
-                # Send the note_off message
-                self.midiout.send_message(note_off.to_midi_message())
-                
-                # Remove this note from active notes
-                note_key = (note_off.note, note_off.channel)
-                if note_key in self.active_notes:
-                    del self.active_notes[note_key]
-                    
-                if self.debug:
-                    print(f"Note OFF: {note_off.note} on channel {note_off.channel+1} at beat {current_beat:.2f}")
+        # Check for any pending note-offs that need to be sent
+        current_time = time.time()
+        remaining_note_offs = []
+        
+        for note_off_time, note_off_msg in self.pending_note_offs:
+            if current_time >= note_off_time:
+                if self.midiout:
+                    self.midiout.send_message(note_off_msg)
+                # Update active notes tracking
+                if len(note_off_msg) >= 3:
+                    note_num = note_off_msg[1]
+                    channel = note_off_msg[0] & 0x0F
+                    self.active_notes.pop((note_num, channel), None)
             else:
-                # Keep this note_off for future processing
-                pending_note_offs_to_keep.append(note_off)
-                
-        # Update the pending note_offs list
-        self.pending_note_offs = pending_note_offs_to_keep
+                remaining_note_offs.append((note_off_time, note_off_msg))
         
-        # Sort notes by their time attribute
-        sorted_notes = sorted(self.loop_notes, key=lambda note: note.time)
+        self.pending_note_offs = remaining_note_offs
         
-        # Reset played_note_events at the start of each bar
-        if self.tick_counter % self.ticks_per_bar == 0:
-            self.played_note_events.clear()
+        # Check for notes to play at this tick
+        current_beat = self.tick_counter / self.ppq
         
-        # Play notes that should be played at this beat position
-        for note in sorted_notes:
-            # Skip notes that aren't note_on messages
-            if note.message_type & 0xF0 != 0x90:  # Check if it's a note_on message (0x90-0x9F)
-                continue
-                
-            # Create a unique identifier for each note event
-            note_id = (note.message_type, note.note, note.time, note.channel)
+        # Process any notes in the loop
+        for note in self.loop_notes:
+            # Calculate the note's position in the current loop
+            note_beat_in_loop = note.time % (self.time_signature[0] * (self.time_signature[1] / 4))
+            current_beat_in_loop = current_beat % (self.time_signature[0] * (self.time_signature[1] / 4))
             
-            # Skip notes that have already been played in this loop
-            if note_id in self.played_note_events:
-                continue
+            # Check if this note should be played at this tick
+            # We use a small epsilon to account for floating point errors
+            epsilon = 0.01
+            if (abs(note_beat_in_loop - current_beat_in_loop) < epsilon and 
+                (note.message_type, note.note, current_beat) not in self.played_note_events):
                 
-            # Calculate if this note should be played at this beat
-            note_beat_position = note.time % total_beats_in_loop
-            
-            # If we're close to the note's beat position, play it
-            # Use a small tolerance to account for timing jitter
-            if abs(current_beat - note_beat_position) < 0.1 or (current_beat < 0.1 and note_beat_position > (total_beats_in_loop - 0.1)):
-                # Turn off all currently active notes to ensure only one note or chord is played at a time
-                for note_key, active_note in list(self.active_notes.items()):
-                    note_off = MidiNote(0x80, note_key[0], 0, note_key[1], current_beat)
-                    self.midiout.send_message(note_off.to_midi_message())
-                    del self.active_notes[note_key]
-                    if self.debug:
-                        print(f"Pre-emptive Note OFF: {note_key[0]} on channel {note_key[1]+1} at beat {current_beat:.2f}")
+                # Mark this note as played at this time
+                self.played_note_events.add((note.message_type, note.note, current_beat))
                 
-                # Send the note_on message
-                self.midiout.send_message(note.to_midi_message())
+                # Send the note message
+                if self.midiout:
+                    self.midiout.send_message(note.to_midi_message())
                 
-                # Mark this note as active
-                note_key = (note.note, note.channel)
-                self.active_notes[note_key] = note
-                
-                if self.debug:
-                    print(f"Note ON: {note.note} on channel {note.channel+1} at beat {current_beat:.2f}")
-            
-            # Mark the note as played in this loop
-            self.played_note_events.add(note_id)
-
+                # For note-on messages, schedule a note-off message
+                if note.message_type == 0x90 and note.velocity > 0:
+                    # Default note duration is one quarter note
+                    note_duration_beats = 1.0
+                    # Calculate when to send the note-off message
+                    seconds_per_beat = 60.0 / self.current_tempo
+                    note_off_time = current_time + (note_duration_beats * seconds_per_beat)
+                    
+                    # Create note-off message
+                    note_off_msg = [0x80 | note.channel, note.note, 0]
+                    
+                    # Add to pending note-offs
+                    self.pending_note_offs.append((note_off_time, note_off_msg))
+                    
+                    # Update active notes tracking
+                    self.active_notes[(note.note, note.channel)] = note_off_time
+        
+        # Clean up played_note_events to prevent it from growing too large
+        # Remove events that are more than one bar old
+        current_bar_beat = current_beat - (current_beat % self.time_signature[0])
+        self.played_note_events = {event for event in self.played_note_events 
+                                 if event[2] >= current_bar_beat - self.time_signature[0]}
+    
+    def _stop_all_notes(self):
+        """Stop all currently playing notes."""
+        if self.midiout:
+            # Send note-off messages for all active notes
+            for (note, channel), _ in self.active_notes.items():
+                note_off_msg = [0x80 | channel, note, 0]
+                self.midiout.send_message(note_off_msg)
+        
+        # Clear active notes and pending note-offs
+        self.active_notes = {}
+        self.pending_note_offs = []
+    
+    def _handle_midi_message(self, message):
+        """
+        Handle incoming MIDI messages.
+        
+        Args:
+            message: MIDI message to handle
+        """
+        # Convert message to rtmidi format and pass to callback
+        if hasattr(message, 'bytes'):
+            self._midi_callback((message.bytes(), 0))
+        else:
+            # Handle raw bytes
+            self._midi_callback((message, 0))
+    
     def add_note_to_loop(self, note):
         """
         Add a note to the loop.
@@ -608,7 +603,7 @@ class MidiEventLoop:
                     
                     # Every quarter note (24 ticks), play scheduled notes
                     if self.tick_counter % self.ppq == 0:
-                        self._play_scheduled_notes()
+                        self._process_notes_at_current_tick()
                         
                     # Check if we've completed a bar
                     if self.tick_counter % self.ticks_per_bar == 0:
@@ -634,7 +629,7 @@ class MidiEventLoop:
 class MidiNote:
     """
     A class to represent a MIDI note with additional timing information.
-    This is used to replace the mido Message objects with a compatible interface for rtmidi.
+    This is used to provide a compatible interface for rtmidi.
     """
     def __init__(self, message_type, note, velocity, channel=0, time=0):
         """
