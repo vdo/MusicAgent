@@ -33,7 +33,8 @@ midi_channels = list(range(1, 17))
 # Model options
 model_options = {
     "Qwen 2.5 Coder 32B": "qwen_coder",
-    "DeepSeek Coder V2 Instruct": "deepseek_coder"
+    "DeepSeek Coder V2 Instruct": "deepseek_coder",
+    "Qwen QwQ 32B": "qwen_qwq"
 }
 
 # Initialize with Qwen model by default
@@ -92,6 +93,16 @@ def switch_model(model_choice):
             provider=None,
         )
         current_model_type = "qwen_coder"
+        # Recreate agent with new model
+        initialize_agent()
+        return f"Switched to {model_choice}"
+    
+    elif model_options[model_choice] == "qwen_qwq" and current_model_type != "qwen_qwq":
+        model = HfApiModel(
+            model_id='Qwen/QwQ-32B',
+            provider="hyperbolic",
+        )
+        current_model_type = "qwen_qwq"
         # Recreate agent with new model
         initialize_agent()
         return f"Switched to {model_choice}"
